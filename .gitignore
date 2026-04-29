@@ -14,5 +14,4 @@ worktrees/
 # Development harness docs are local-only
 docs/
 CLAUDE.md
-README.md
 packages/web/README.md
