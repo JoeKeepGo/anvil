@@ -1,0 +1,18 @@
+node_modules/
+dist/
+.env
+.env.local
+.DS_Store
+*.log
+
+# Local agent instructions and worktrees
+.claude/
+.agents/
+.worktrees/
+worktrees/
+
+# Development harness docs are local-only
+docs/
+CLAUDE.md
+README.md
+packages/web/README.md

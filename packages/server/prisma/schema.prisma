@@ -1,0 +1,54 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id        String     @id @default(uuid())
+  email     String     @unique
+  password  String
+  name      String
+  role      Role       @default(MEMBER)
+  teamId    String
+  team      Team       @relation(fields: [teamId], references: [id])
+  auditLogs AuditLog[]
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+}
+
+model Team {
+  id        String          @id @default(uuid())
+  name      String
+  members   User[]
+  endpoints ProxyEndpoint[]
+  createdAt DateTime        @default(now())
+}
+
+model ProxyEndpoint {
+  id        String   @id @default(uuid())
+  name      String
+  url       String
+  token     String
+  teamId    String
+  team      Team     @relation(fields: [teamId], references: [id])
+  createdAt DateTime @default(now())
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  action    String
+  target    String
+  metadata  Json?
+  createdAt DateTime @default(now())
+}
+
+enum Role {
+  ADMIN
+  MEMBER
+}
