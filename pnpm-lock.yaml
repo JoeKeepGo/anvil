@@ -35,6 +35,9 @@ importers:
       '@types/jsonwebtoken':
         specifier: ^9.0.0
         version: 9.0.10
+      '@types/node':
+        specifier: ^25.6.0
+        version: 25.6.0
       '@types/ws':
         specifier: ^8.0.0
         version: 8.18.1
