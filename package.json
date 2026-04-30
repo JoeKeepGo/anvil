@@ -1,5 +1,5 @@
 {
-  "name": "anvil-dashboard",
+  "name": "anvil",
   "private": true,
   "scripts": {
     "dev": "pnpm --parallel -r dev",

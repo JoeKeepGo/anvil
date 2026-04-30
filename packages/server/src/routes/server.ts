@@ -7,7 +7,7 @@ serverRoutes.get("/server", async (c) => {
     version: "0.1.0",
     api_version: "1.0",
     environment: {
-      server_name: "Anvil Dashboard",
+      server_name: "Anvil",
       kernel: "",
       os_name: "",
     },

@@ -23,7 +23,7 @@ app.route("/api", settingsRoutes)
 app.get("/api/health", (c) => c.json({ status: "ok" }))
 
 const port = parseInt(process.env.PORT || "3000")
-console.log(`Anvil Dashboard API starting on port ${port}`)
+console.log(`Anvil API starting on port ${port}`)
 
 export default {
   port,

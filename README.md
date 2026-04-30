@@ -1,13 +1,13 @@
-# Anvil Dashboard
+# Anvil
 
-Anvil Dashboard is the web control plane for Anvil. It provides a browser interface and backend API for managing Incus hosts through Anvil host agents.
+Anvil is a web control plane for managing Incus hosts. It provides the browser interface, backend API, and control-plane state needed to operate one or more hosts through Anvil Agent.
 
-The Dashboard owns product-level concerns that do not belong in the host agent: users, sessions, teams, endpoint inventory, authorization, audit logs, and multi-host orchestration.
+This repository is the main Anvil application. The companion host-side component lives in the `anvil-agent` repository.
 
 ## What It Does
 
 - Presents a web UI for Incus instances, images, operations, and host settings.
-- Connects the backend control plane to one or more Anvil host agents.
+- Connects the backend control plane to one or more Anvil Agent endpoints.
 - Keeps host credentials and Incus access out of the browser.
 - Provides a stable API for fleet-level management.
 - Creates a path for RBAC, audit logging, and future SSO.
@@ -16,19 +16,19 @@ The Dashboard owns product-level concerns that do not belong in the host agent: 
 
 ```text
 Browser
-  -> Dashboard API
-    -> Anvil host agent
+  -> Anvil API
+    -> Anvil Agent
       -> Incus Unix socket
         -> Incus daemon
 ```
 
-The browser talks only to the Dashboard API. The Dashboard backend decides which host agent to use, applies control-plane policy, and records state-changing operations.
+The browser talks only to the Anvil API. The backend decides which agent endpoint to use, applies control-plane policy, and records state-changing operations.
 
 ## Why a Backend
 
 Incus has an official REST API, but exposing that API directly to browsers or every operator creates operational friction around TLS, credentials, CORS, authorization, and auditing.
 
-Anvil Dashboard keeps those concerns in the backend. The backend may talk to host agents or, in a different deployment model, directly to Incus remote API. The current design uses host agents so Incus Unix socket access stays local to each host.
+Anvil keeps those concerns in the backend. The backend may talk to Anvil Agent endpoints or, in a different deployment model, directly to the Incus remote API. The current design uses agents so Incus Unix socket access stays local to each host.
 
 ## Use Cases
 
@@ -68,7 +68,7 @@ pnpm --filter @anvil/web typecheck
 
 ## Project Status
 
-This repository is in early development. The workspace, frontend shell, Prisma schema, and route structure are present. The main remaining work is the Dashboard backend control plane: host-agent connection management, auth, endpoint persistence, authorization, audit logging, and real Incus data flows.
+This repository is in early development. The workspace, frontend shell, Prisma schema, and route structure are present. The main remaining work is the backend control plane: agent connection management, auth, endpoint persistence, authorization, audit logging, and real Incus data flows.
 
 ## License
 

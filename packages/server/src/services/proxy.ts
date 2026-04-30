@@ -1,5 +1,5 @@
-// WebSocket client pool for Anvil host-agent connections.
-// Each Anvil host agent (Go, deployed per Incus machine) exposes a WebSocket endpoint
+// WebSocket client pool for Anvil Agent connections.
+// Each Anvil Agent instance (Go, deployed per Incus machine) exposes a WebSocket endpoint
 // at ws://host:9090/ws that relays Incus REST API calls and pushes lifecycle events.
 //
 // This module:
