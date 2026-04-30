@@ -13,5 +13,6 @@ worktrees/
 
 # Development harness docs are local-only
 docs/
+AGENTS.md
 CLAUDE.md
 packages/web/README.md
