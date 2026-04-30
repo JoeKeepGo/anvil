@@ -24,11 +24,11 @@ model Team {
   id        String          @id @default(uuid())
   name      String
   members   User[]
-  endpoints ProxyEndpoint[]
+  endpoints AgentEndpoint[]
   createdAt DateTime        @default(now())
 }
 
-model ProxyEndpoint {
+model AgentEndpoint {
   id        String   @id @default(uuid())
   name      String
   url       String

@@ -2,10 +2,10 @@ import { Hono } from "hono"
 
 export const settingsRoutes = new Hono()
 
-settingsRoutes.get("/settings/proxies", async (c) => {
-  return c.json({ proxies: [] })
+settingsRoutes.get("/settings/agent-endpoints", async (c) => {
+  return c.json({ agent_endpoints: [] })
 })
 
-settingsRoutes.post("/settings/proxies", async (c) => {
-  return c.json({ message: "add proxy not yet implemented" }, 501)
+settingsRoutes.post("/settings/agent-endpoints", async (c) => {
+  return c.json({ message: "add agent endpoint not yet implemented" }, 501)
 })
