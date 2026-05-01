@@ -1,4 +1,5 @@
 import { Box } from "lucide-react"
+import { Link } from "react-router-dom"
 import { ErrorAlert } from "@/components/ErrorAlert"
 import { StatusBadge } from "@/components/StatusBadge"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -100,7 +101,14 @@ export function InstancesView({ instances }: { instances: InstancesViewState }) 
             <TableBody>
               {instances.data.map((instance) => (
                 <TableRow key={instance.name}>
-                  <TableCell className="font-medium">{instance.name}</TableCell>
+                  <TableCell className="font-medium">
+                    <Link
+                      to={`/instances/${encodeURIComponent(instance.name)}`}
+                      className="text-foreground underline-offset-4 hover:underline"
+                    >
+                      {instance.name}
+                    </Link>
+                  </TableCell>
                   <TableCell>
                     <StatusBadge status={instance.status} />
                   </TableCell>

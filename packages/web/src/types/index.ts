@@ -20,6 +20,31 @@ export interface InstancesResponse {
   instances: Instance[]
 }
 
+export interface InstanceDetail {
+  name: string
+  status: string
+  type: string
+  architecture: string | null
+  createdAt: string | null
+  description: string
+  ephemeral: boolean
+  stateful: boolean
+  profiles: string[]
+  limits: {
+    memory: string | null
+    cpu: string | null
+  }
+  rootDisk: {
+    pool: string | null
+    size: string | null
+    type: string
+  } | null
+}
+
+export interface InstanceDetailResponse {
+  instance: InstanceDetail
+}
+
 export interface Image {
   fingerprint: string
   filename: string

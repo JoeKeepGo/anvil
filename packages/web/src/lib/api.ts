@@ -1,4 +1,13 @@
-import type { ServerInfo, Instance, InstancesResponse, Image, Operation, ApiError } from "../types"
+import type {
+  ServerInfo,
+  Instance,
+  InstanceDetail,
+  InstanceDetailResponse,
+  InstancesResponse,
+  Image,
+  Operation,
+  ApiError,
+} from "../types"
 
 class ApiRequestError extends Error {
   code: string
@@ -47,8 +56,10 @@ export function fetchInstances(): Promise<Instance[]> {
   return apiFetch<InstancesResponse>("/api/instances").then((response) => response.instances)
 }
 
-export function fetchInstance(name: string): Promise<Instance> {
-  return apiFetch<Instance>(`/api/instances/${encodeURIComponent(name)}`)
+export function fetchInstance(name: string): Promise<InstanceDetail> {
+  return apiFetch<InstanceDetailResponse>(`/api/instances/${encodeURIComponent(name)}`).then(
+    (response) => response.instance
+  )
 }
 
 // Images
