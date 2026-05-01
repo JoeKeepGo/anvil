@@ -12,23 +12,12 @@ export interface Instance {
   name: string
   type: string
   status: string
-  description: string
-  created_at: string
-  last_used_at: string
-  stateful: boolean
-  config: Record<string, string>
+  architecture: string | null
+  createdAt: string | null
 }
 
-export interface InstancePost {
-  name: string
-  description: string
-  type: string
-  source: {
-    alias: string
-    protocol: string
-    server: string
-    type: string
-  }
+export interface InstancesResponse {
+  instances: Instance[]
 }
 
 export interface Image {
