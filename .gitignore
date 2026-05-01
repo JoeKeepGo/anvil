@@ -15,4 +15,5 @@ worktrees/
 docs/
 AGENTS.md
 CLAUDE.md
+memory.md
 packages/web/README.md
