@@ -1,4 +1,4 @@
-import type { ServerInfo, Instance, InstancePost, Image, Operation, ApiError } from "../types"
+import type { ServerInfo, Instance, InstancesResponse, Image, Operation, ApiError } from "../types"
 
 class ApiRequestError extends Error {
   code: string
@@ -44,34 +44,11 @@ export function fetchServer(): Promise<ServerInfo> {
 
 // Instances
 export function fetchInstances(): Promise<Instance[]> {
-  return apiFetch<Instance[]>("/api/instances")
+  return apiFetch<InstancesResponse>("/api/instances").then((response) => response.instances)
 }
 
 export function fetchInstance(name: string): Promise<Instance> {
   return apiFetch<Instance>(`/api/instances/${encodeURIComponent(name)}`)
-}
-
-export function startInstance(name: string): Promise<{ operation: Operation }> {
-  return apiFetch(`/api/instances/${encodeURIComponent(name)}/start`, { method: "POST" })
-}
-
-export function stopInstance(name: string): Promise<{ operation: Operation }> {
-  return apiFetch(`/api/instances/${encodeURIComponent(name)}/stop`, { method: "POST" })
-}
-
-export function restartInstance(name: string): Promise<{ operation: Operation }> {
-  return apiFetch(`/api/instances/${encodeURIComponent(name)}/restart`, { method: "POST" })
-}
-
-export function deleteInstance(name: string): Promise<{ operation: Operation }> {
-  return apiFetch(`/api/instances/${encodeURIComponent(name)}`, { method: "DELETE" })
-}
-
-export function createInstance(data: InstancePost): Promise<{ operation: Operation }> {
-  return apiFetch("/api/instances", {
-    method: "POST",
-    body: JSON.stringify(data),
-  })
 }
 
 // Images
