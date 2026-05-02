@@ -39,7 +39,7 @@ export function Dashboard() {
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Single-host read-only summary from the configured Anvil backend.
+          Single-host read-only summary from the configured host.
         </p>
       </div>
 
@@ -159,12 +159,12 @@ export function Dashboard() {
             {loadingAny ? (
               <PanelNotice
                 title="Loading host data"
-                detail="Dashboard summary is waiting for one or more read-only APIs."
+                detail="Host summary is still loading."
               />
             ) : errorCount > 0 ? (
               <PanelNotice
                 title="Some data did not load"
-                detail={`${errorCount} read-only request${errorCount === 1 ? "" : "s"} returned an error.`}
+                detail={`${errorCount} summary section${errorCount === 1 ? "" : "s"} could not load.`}
               />
             ) : emptyCount > 0 ? (
               <PanelNotice
@@ -216,7 +216,7 @@ function SummaryCard({ title, icon, loading, error, value, detail, badge }: Summ
           </>
         ) : error ? (
           <>
-            <div className="text-2xl font-bold text-destructive">Error</div>
+            <div className="text-2xl font-bold text-destructive">Unavailable</div>
             <p className="line-clamp-2 text-xs text-muted-foreground">{error}</p>
           </>
         ) : (

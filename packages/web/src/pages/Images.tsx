@@ -58,7 +58,7 @@ export function ImagesView({ images }: { images: ImagesViewState }) {
 
 function ImagesTable({ images }: { images: ImageSummary[] }) {
   return (
-    <div className="rounded-lg border border-border">
+    <div className="overflow-hidden rounded-lg border border-border">
       <Table>
         <TableHeader>
           <TableRow>
@@ -88,8 +88,8 @@ function ImagesTable({ images }: { images: ImageSummary[] }) {
                 {image.aliases.length > 0 ? (
                   <div className="flex max-w-[14rem] flex-wrap gap-1">
                     {image.aliases.map((alias) => (
-                      <Badge key={alias.name} variant="outline">
-                        {alias.name}
+                      <Badge key={alias.name} variant="outline" className="max-w-full">
+                        <span className="truncate">{alias.name}</span>
                       </Badge>
                     ))}
                   </div>
@@ -147,7 +147,7 @@ function ImageFlags({ image }: { image: ImageSummary }) {
 
 function ImagesSkeleton() {
   return (
-    <div className="rounded-lg border border-border">
+    <div className="overflow-hidden rounded-lg border border-border">
       <Table>
         <TableHeader>
           <TableRow>

@@ -49,8 +49,13 @@ export function InstanceDetailView({ name, instance, notFound }: InstanceDetailV
           <Box className="mb-3 h-8 w-8 text-muted-foreground" />
           <p className="text-sm font-medium">Instance not found</p>
           <p className="mt-1 max-w-sm text-sm text-muted-foreground">
-            The configured host did not return an instance named {name || "this instance"}.
+            The configured host did not return the requested instance.
           </p>
+          {name ? (
+            <p className="mt-2 max-w-sm break-all font-mono text-xs text-muted-foreground">
+              {name}
+            </p>
+          ) : null}
         </div>
       ) : instance.error ? (
         <ErrorAlert
@@ -84,12 +89,12 @@ function InstanceDetailContent({ instance }: { instance: InstanceDetailType }) {
     <>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">{instance.name}</h1>
+          <h1 className="break-words text-2xl font-semibold tracking-tight">{instance.name}</h1>
         </div>
         <StatusBadge status={instance.status} />
       </div>
 
-      <div className="rounded-lg border border-border">
+      <div className="overflow-hidden rounded-lg border border-border">
         <dl className="divide-y divide-border">
           {rows.map((row) => (
             <div
@@ -113,7 +118,7 @@ function InstanceDetailSkeleton() {
         <Skeleton className="h-8 w-48" />
         <Skeleton className="h-4 w-72" />
       </div>
-      <div className="rounded-lg border border-border">
+      <div className="overflow-hidden rounded-lg border border-border">
         {Array.from({ length: 8 }).map((_, index) => (
           <div
             key={index}
