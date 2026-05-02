@@ -45,17 +45,20 @@ export interface InstanceDetailResponse {
   instance: InstanceDetail
 }
 
-export interface Image {
+export interface ImageSummary {
   fingerprint: string
-  filename: string
-  size: number
-  public: boolean
-  created_at: string
-  expires_at: string
-  uploaded_at: string
-  type: string
   aliases: ImageAlias[]
-  properties: Record<string, string>
+  description: string
+  architecture: string | null
+  type: string
+  sizeBytes: number
+  cached: boolean
+  public: boolean
+  autoUpdate: boolean
+  createdAt: string | null
+  expiresAt: string | null
+  lastUsedAt: string | null
+  uploadedAt: string | null
 }
 
 export interface ImageAlias {
@@ -63,17 +66,24 @@ export interface ImageAlias {
   description: string
 }
 
-export interface Operation {
+export interface ImagesResponse {
+  images: ImageSummary[]
+}
+
+export interface OperationSummary {
   id: string
   class: string
   description: string
-  created_at: string
-  updated_at: string
   status: string
-  status_code: string
-  err: string
-  may_cancel: boolean
-  metadata: Record<string, unknown>
+  statusCode: number
+  createdAt: string | null
+  updatedAt: string | null
+  mayCancel: boolean
+  resources: Record<string, unknown>
+}
+
+export interface OperationsResponse {
+  operations: OperationSummary[]
 }
 
 export interface ApiError {

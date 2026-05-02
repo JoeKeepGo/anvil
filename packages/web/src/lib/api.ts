@@ -4,8 +4,10 @@ import type {
   InstanceDetail,
   InstanceDetailResponse,
   InstancesResponse,
-  Image,
-  Operation,
+  ImageSummary,
+  ImagesResponse,
+  OperationSummary,
+  OperationsResponse,
   ApiError,
 } from "../types"
 
@@ -63,17 +65,13 @@ export function fetchInstance(name: string): Promise<InstanceDetail> {
 }
 
 // Images
-export function fetchImages(): Promise<Image[]> {
-  return apiFetch<Image[]>("/api/images")
+export function fetchImages(): Promise<ImageSummary[]> {
+  return apiFetch<ImagesResponse>("/api/images").then((response) => response.images)
 }
 
 // Operations
-export function fetchOperations(): Promise<Operation[]> {
-  return apiFetch<Operation[]>("/api/operations")
-}
-
-export function fetchOperation(id: string): Promise<Operation> {
-  return apiFetch<Operation>(`/api/operations/${encodeURIComponent(id)}`)
+export function fetchOperations(): Promise<OperationSummary[]> {
+  return apiFetch<OperationsResponse>("/api/operations").then((response) => response.operations)
 }
 
 // Auth
