@@ -1,11 +1,55 @@
 import { Hono } from "hono"
+import { ConfigError, parseServerConfig, type ServerConfig } from "../config"
+import { AgentClient } from "../services/agent"
+import {
+  getOperations,
+  operationsAgentConfigError,
+  type OperationsAgent,
+} from "../services/operations"
 
-export const operationRoutes = new Hono()
+interface ClosableOperationsAgent extends OperationsAgent {
+  close?: () => void
+}
 
-operationRoutes.get("/operations", async (c) => {
-  return c.json({ message: "operations not yet implemented" }, 501)
-})
+export interface OperationRoutesOptions {
+  env?: NodeJS.ProcessEnv
+  createClient?: (config: ServerConfig["agent"]) => ClosableOperationsAgent
+}
 
-operationRoutes.get("/operations/:id", async (c) => {
-  return c.json({ message: "operation detail not yet implemented" }, 501)
-})
+export function createOperationRoutes(options: OperationRoutesOptions = {}) {
+  const routes = new Hono()
+  const env = options.env ?? process.env
+  const createClient =
+    options.createClient ??
+    ((config: ServerConfig["agent"]) => {
+      return new AgentClient(config)
+    })
+
+  routes.get("/operations", async (c) => {
+    let config: ServerConfig
+
+    try {
+      config = parseServerConfig(env)
+    } catch (error) {
+      if (error instanceof ConfigError) {
+        const result = operationsAgentConfigError()
+        return c.json(result.body, result.httpStatus)
+      }
+
+      throw error
+    }
+
+    const client = createClient(config.agent)
+
+    try {
+      const result = await getOperations(client)
+      return c.json(result.body, result.httpStatus)
+    } finally {
+      client.close?.()
+    }
+  })
+
+  return routes
+}
+
+export const operationRoutes = createOperationRoutes()
