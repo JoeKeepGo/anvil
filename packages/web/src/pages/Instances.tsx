@@ -39,7 +39,7 @@ export function InstancesView({ instances }: { instances: InstancesViewState }) 
       </div>
 
       {instances.loading ? (
-        <div className="rounded-lg border border-border">
+        <div className="overflow-hidden rounded-lg border border-border">
           <Table>
             <TableHeader>
               <TableRow>
@@ -87,7 +87,7 @@ export function InstancesView({ instances }: { instances: InstancesViewState }) 
           </p>
         </div>
       ) : instances.data ? (
-        <div className="rounded-lg border border-border">
+        <div className="overflow-hidden rounded-lg border border-border">
           <Table>
             <TableHeader>
               <TableRow>
@@ -101,10 +101,10 @@ export function InstancesView({ instances }: { instances: InstancesViewState }) 
             <TableBody>
               {instances.data.map((instance) => (
                 <TableRow key={instance.name}>
-                  <TableCell className="font-medium">
+                  <TableCell className="max-w-[18rem] whitespace-normal font-medium">
                     <Link
                       to={`/instances/${encodeURIComponent(instance.name)}`}
-                      className="text-foreground underline-offset-4 hover:underline"
+                      className="block break-all text-foreground underline-offset-4 hover:underline"
                     >
                       {instance.name}
                     </Link>

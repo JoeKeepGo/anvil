@@ -62,7 +62,7 @@ export function OperationsView({ operations }: { operations: OperationsViewState
 
 function OperationsTable({ operations }: { operations: OperationSummary[] }) {
   return (
-    <div className="rounded-lg border border-border">
+    <div className="overflow-hidden rounded-lg border border-border">
       <Table>
         <TableHeader>
           <TableRow>
@@ -123,8 +123,10 @@ function ResourceBadges({ resources }: { resources: Record<string, unknown> }) {
   return (
     <div className="flex max-w-[16rem] flex-wrap gap-1">
       {entries.map(([resource, values]) => (
-        <Badge key={resource} variant="outline">
-          {resource}: {(values as unknown[]).length}
+        <Badge key={resource} variant="outline" className="max-w-full">
+          <span className="truncate">
+            {resource}: {(values as unknown[]).length}
+          </span>
         </Badge>
       ))}
     </div>
@@ -133,7 +135,7 @@ function ResourceBadges({ resources }: { resources: Record<string, unknown> }) {
 
 function OperationsSkeleton() {
   return (
-    <div className="rounded-lg border border-border">
+    <div className="overflow-hidden rounded-lg border border-border">
       <Table>
         <TableHeader>
           <TableRow>
