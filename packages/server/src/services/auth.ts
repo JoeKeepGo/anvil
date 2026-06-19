@@ -96,6 +96,10 @@ export function verifySession(env: NodeJS.ProcessEnv, sessionToken: string | und
   return config.user
 }
 
+export function assertAuthConfigured(env: NodeJS.ProcessEnv): void {
+  parseAuthConfig(env)
+}
+
 function parseAuthConfig(env: NodeJS.ProcessEnv): AuthConfig {
   const email = requiredEnv(env, "ANVIL_BOOTSTRAP_ADMIN_EMAIL")
   const name = requiredEnv(env, "ANVIL_BOOTSTRAP_ADMIN_NAME")
