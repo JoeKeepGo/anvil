@@ -86,6 +86,19 @@ export interface OperationsResponse {
   operations: OperationSummary[]
 }
 
+export type AuthRole = "ADMIN" | "MEMBER"
+
+export interface AuthUser {
+  id: string
+  email: string
+  name: string
+  role: AuthRole
+}
+
+export interface AuthResponse {
+  user: AuthUser
+}
+
 export interface ApiError {
   code: string
   message: string

@@ -8,6 +8,8 @@ import type {
   ImagesResponse,
   OperationSummary,
   OperationsResponse,
+  AuthResponse,
+  AuthUser,
   ApiError,
 } from "../types"
 
@@ -75,15 +77,15 @@ export function fetchOperations(): Promise<OperationSummary[]> {
 }
 
 // Auth
-export function login(email: string, password: string): Promise<{ token: string }> {
-  return apiFetch("/api/auth/login", {
+export function login(email: string, password: string): Promise<AuthUser> {
+  return apiFetch<AuthResponse>("/api/auth/login", {
     method: "POST",
     body: JSON.stringify({ email, password }),
-  })
+  }).then((response) => response.user)
 }
 
-export function fetchMe(): Promise<{ id: string; email: string; name: string }> {
-  return apiFetch("/api/auth/me")
+export function fetchMe(): Promise<AuthUser> {
+  return apiFetch<AuthResponse>("/api/auth/me").then((response) => response.user)
 }
 
 export { ApiRequestError }

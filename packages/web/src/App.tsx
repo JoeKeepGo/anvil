@@ -6,11 +6,13 @@ import { InstanceDetail } from "@/pages/InstanceDetail"
 import { Images } from "@/pages/Images"
 import { Operations } from "@/pages/Operations"
 import { Settings } from "@/pages/Settings"
+import { Login } from "@/pages/Login"
 
 export function App() {
   return (
     <BrowserRouter>
       <Routes>
+        <Route path="/login" element={<Login />} />
         <Route element={<Layout />}>
           <Route index element={<Dashboard />} />
           <Route path="/instances" element={<Instances />} />
