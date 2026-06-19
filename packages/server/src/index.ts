@@ -2,6 +2,7 @@ import { Hono } from "hono"
 import { serve } from "@hono/node-server"
 import { cors } from "hono/cors"
 import { logger } from "hono/logger"
+import { requireAuth } from "./middleware/authGate"
 import { authRoutes } from "./routes/auth"
 import { hostRoutes } from "./routes/host"
 import { serverRoutes } from "./routes/server"
@@ -15,15 +16,23 @@ const app = new Hono()
 app.use("*", cors({ origin: "http://localhost:5173", credentials: true }))
 app.use("*", logger())
 
+app.get("/api/health", (c) => c.json({ status: "ok" }))
 app.route("/api/auth", authRoutes)
+
+app.use("/api/server", requireAuth())
+app.use("/api/host/*", requireAuth())
+app.use("/api/instances", requireAuth())
+app.use("/api/instances/*", requireAuth())
+app.use("/api/images", requireAuth())
+app.use("/api/operations", requireAuth())
+app.use("/api/settings/*", requireAuth())
+
 app.route("/api", hostRoutes)
 app.route("/api", serverRoutes)
 app.route("/api", instanceRoutes)
 app.route("/api", imageRoutes)
 app.route("/api", operationRoutes)
 app.route("/api", settingsRoutes)
-
-app.get("/api/health", (c) => c.json({ status: "ok" }))
 
 const port = parseInt(process.env.PORT || "3000")
 

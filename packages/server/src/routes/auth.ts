@@ -7,9 +7,7 @@ import {
   AuthSessionError,
   verifySession,
 } from "../services/auth"
-
-const sessionCookieName = "anvil_session"
-const sessionMaxAgeSeconds = 60 * 60 * 8
+import { readSessionCookie, serializeSessionCookie } from "../services/sessionCookie"
 
 const loginRequestSchema = z.object({
   email: z.string().email(),
@@ -120,35 +118,6 @@ async function readJsonBody(request: Request): Promise<unknown> {
   } catch {
     return undefined
   }
-}
-
-function serializeSessionCookie(sessionToken: string): string {
-  return [
-    `${sessionCookieName}=${encodeURIComponent(sessionToken)}`,
-    "HttpOnly",
-    "SameSite=Lax",
-    "Path=/",
-    `Max-Age=${sessionMaxAgeSeconds}`,
-  ].join("; ")
-}
-
-function readSessionCookie(cookieHeader: string | undefined): string | undefined {
-  if (!cookieHeader) {
-    return undefined
-  }
-
-  for (const cookie of cookieHeader.split(";")) {
-    const [rawName, ...rawValue] = cookie.trim().split("=")
-    if (rawName === sessionCookieName) {
-      try {
-        return decodeURIComponent(rawValue.join("="))
-      } catch {
-        return undefined
-      }
-    }
-  }
-
-  return undefined
 }
 
 export const authRoutes = createAuthRoutes()

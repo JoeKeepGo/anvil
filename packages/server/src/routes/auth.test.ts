@@ -193,4 +193,143 @@ describe("auth routes", () => {
       })
     }
   })
+
+  test("app leaves health and auth endpoints public while mapping missing auth config safely", async () => {
+    const originalNodeEnv = process.env.NODE_ENV
+    const originalAuthEnv = {
+      ANVIL_BOOTSTRAP_ADMIN_EMAIL: process.env.ANVIL_BOOTSTRAP_ADMIN_EMAIL,
+      ANVIL_BOOTSTRAP_ADMIN_NAME: process.env.ANVIL_BOOTSTRAP_ADMIN_NAME,
+      ANVIL_BOOTSTRAP_ADMIN_PASSWORD_HASH: process.env.ANVIL_BOOTSTRAP_ADMIN_PASSWORD_HASH,
+      ANVIL_SESSION_SECRET: process.env.ANVIL_SESSION_SECRET,
+    }
+
+    process.env.NODE_ENV = "test"
+    delete process.env.ANVIL_BOOTSTRAP_ADMIN_EMAIL
+    delete process.env.ANVIL_BOOTSTRAP_ADMIN_NAME
+    delete process.env.ANVIL_BOOTSTRAP_ADMIN_PASSWORD_HASH
+    delete process.env.ANVIL_SESSION_SECRET
+
+    try {
+      const { app } = await import("../index")
+
+      const health = await app.request("/api/health")
+      const authMe = await app.request("/api/auth/me")
+      const server = await app.request("/api/server")
+      const hostHealth = await app.request("/api/host/health")
+      const instances = await app.request("/api/instances")
+      const instanceDetail = await app.request("/api/instances/nonexistent")
+      const images = await app.request("/api/images")
+      const operations = await app.request("/api/operations")
+      const settings = await app.request("/api/settings/agent-endpoints")
+
+      assert.equal(health.status, 200)
+      assert.deepEqual(await readJson(health), { status: "ok" })
+
+      assert.equal(authMe.status, 401)
+      assert.deepEqual(await readJson(authMe), {
+        error: {
+          code: "UNAUTHENTICATED",
+          message: "Authentication is required.",
+          details: {},
+        },
+      })
+
+      for (const response of [
+        server,
+        hostHealth,
+        instances,
+        instanceDetail,
+        images,
+        operations,
+        settings,
+      ]) {
+        assert.equal(response.status, 500)
+        assert.deepEqual(await readJson(response), {
+          error: {
+            code: "AUTH_CONFIG_ERROR",
+            message: "Authentication is not configured.",
+            details: {},
+          },
+        })
+      }
+    } finally {
+      if (originalNodeEnv === undefined) {
+        delete process.env.NODE_ENV
+      } else {
+        process.env.NODE_ENV = originalNodeEnv
+      }
+
+      for (const [key, value] of Object.entries(originalAuthEnv)) {
+        if (value === undefined) {
+          delete process.env[key]
+        } else {
+          process.env[key] = value
+        }
+      }
+    }
+  })
+
+  test("app protects browser-facing product APIs with configured auth", async () => {
+    const originalNodeEnv = process.env.NODE_ENV
+    const originalAuthEnv = {
+      ANVIL_BOOTSTRAP_ADMIN_EMAIL: process.env.ANVIL_BOOTSTRAP_ADMIN_EMAIL,
+      ANVIL_BOOTSTRAP_ADMIN_NAME: process.env.ANVIL_BOOTSTRAP_ADMIN_NAME,
+      ANVIL_BOOTSTRAP_ADMIN_PASSWORD_HASH: process.env.ANVIL_BOOTSTRAP_ADMIN_PASSWORD_HASH,
+      ANVIL_SESSION_SECRET: process.env.ANVIL_SESSION_SECRET,
+    }
+
+    process.env.NODE_ENV = "test"
+    Object.assign(process.env, await authEnv())
+
+    try {
+      const { app } = await import("../index")
+
+      const server = await app.request("/api/server")
+      const hostHealth = await app.request("/api/host/health")
+      const instances = await app.request("/api/instances")
+      const instanceDetail = await app.request("/api/instances/nonexistent")
+      const images = await app.request("/api/images")
+      const operations = await app.request("/api/operations")
+      const settings = await app.request("/api/settings/agent-endpoints")
+      const instanceCreate = await app.request("/api/instances", { method: "POST" })
+      const instanceStart = await app.request("/api/instances/example/start", { method: "POST" })
+      const settingsPost = await app.request("/api/settings/agent-endpoints", { method: "POST" })
+
+      for (const response of [
+        server,
+        hostHealth,
+        instances,
+        instanceDetail,
+        images,
+        operations,
+        settings,
+        instanceCreate,
+        instanceStart,
+        settingsPost,
+      ]) {
+        assert.equal(response.status, 401)
+        assert.deepEqual(await readJson(response), {
+          error: {
+            code: "UNAUTHENTICATED",
+            message: "Authentication is required.",
+            details: {},
+          },
+        })
+      }
+    } finally {
+      if (originalNodeEnv === undefined) {
+        delete process.env.NODE_ENV
+      } else {
+        process.env.NODE_ENV = originalNodeEnv
+      }
+
+      for (const [key, value] of Object.entries(originalAuthEnv)) {
+        if (value === undefined) {
+          delete process.env[key]
+        } else {
+          process.env[key] = value
+        }
+      }
+    }
+  })
 })
