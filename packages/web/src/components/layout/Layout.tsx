@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react"
 import { Navigate, Outlet, useLocation } from "react-router-dom"
+import { useNavigate } from "react-router-dom"
 import { Sidebar } from "./Sidebar"
-import { fetchMe } from "@/lib/api"
+import { fetchMe, logout } from "@/lib/api"
 import { ApiRequestError } from "@/lib/api"
 import type { AuthUser } from "@/types"
 import { Button } from "@/components/ui/button"
@@ -10,9 +11,12 @@ import { Skeleton } from "@/components/ui/skeleton"
 
 export function Layout() {
   const location = useLocation()
+  const navigate = useNavigate()
   const [user, setUser] = useState<AuthUser | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<unknown>(null)
+  const [signingOut, setSigningOut] = useState(false)
+  const [signOutError, setSignOutError] = useState<string | null>(null)
 
   function checkCurrentUser() {
     setLoading(true)
@@ -29,6 +33,21 @@ export function Layout() {
       .finally(() => {
         setLoading(false)
       })
+  }
+
+  async function signOut() {
+    setSigningOut(true)
+    setSignOutError(null)
+
+    try {
+      await logout()
+      setUser(null)
+      navigate("/login", { replace: true })
+    } catch (err) {
+      setSignOutError(err instanceof Error ? err.message : "Unable to sign out.")
+    } finally {
+      setSigningOut(false)
+    }
   }
 
   useEffect(() => {
@@ -103,8 +122,13 @@ export function Layout() {
 
   return (
     <div className="min-h-screen bg-background">
-      <Sidebar user={user} />
+      <Sidebar user={user} onSignOut={signOut} signingOut={signingOut} />
       <main className="ml-56 min-h-screen p-6">
+        {signOutError ? (
+          <div className="mb-4 max-w-xl rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+            {signOutError}
+          </div>
+        ) : null}
         <Outlet />
       </main>
     </div>
