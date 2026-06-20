@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { afterEach, describe, test } from "node:test"
-import { ApiRequestError, fetchMe, login } from "../src/lib/api.ts"
+import { ApiRequestError, fetchMe, login, logout } from "../src/lib/api.ts"
 
 type FetchCall = {
   input: string | URL | Request
@@ -72,6 +72,34 @@ describe("auth API helpers", () => {
     })
     assert.equal(fetchCalls[0]?.input, "/api/auth/me")
     assert.equal(fetchCalls[0]?.init?.credentials, "include")
+  })
+
+  test("logout posts to the backend logout endpoint with credentials and returns no session data", async () => {
+    installJsonFetch(200, { ok: true })
+
+    const result = await logout()
+
+    assert.equal(result, undefined)
+    assert.equal(fetchCalls[0]?.input, "/api/auth/logout")
+    assert.equal(fetchCalls[0]?.init?.method, "POST")
+    assert.equal(fetchCalls[0]?.init?.credentials, "include")
+  })
+
+  test("logout errors preserve safe backend error code and HTTP status", async () => {
+    installJsonFetch(503, {
+      error: {
+        code: "AUTH_UNAVAILABLE",
+        message: "Authentication is temporarily unavailable.",
+        details: {},
+      },
+    })
+
+    await assert.rejects(() => logout(), {
+      name: "ApiRequestError",
+      code: "AUTH_UNAVAILABLE",
+      status: 503,
+      message: "Authentication is temporarily unavailable.",
+    } satisfies Partial<ApiRequestError>)
   })
 
   test("auth errors preserve safe backend error code and HTTP status", async () => {

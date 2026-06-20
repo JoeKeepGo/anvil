@@ -99,6 +99,10 @@ export interface AuthResponse {
   user: AuthUser
 }
 
+export interface LogoutResponse {
+  ok: true
+}
+
 export interface ApiError {
   code: string
   message: string

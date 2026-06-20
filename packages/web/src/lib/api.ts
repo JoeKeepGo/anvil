@@ -10,6 +10,7 @@ import type {
   OperationsResponse,
   AuthResponse,
   AuthUser,
+  LogoutResponse,
   ApiError,
 } from "../types"
 
@@ -86,6 +87,12 @@ export function login(email: string, password: string): Promise<AuthUser> {
 
 export function fetchMe(): Promise<AuthUser> {
   return apiFetch<AuthResponse>("/api/auth/me").then((response) => response.user)
+}
+
+export function logout(): Promise<void> {
+  return apiFetch<LogoutResponse>("/api/auth/logout", {
+    method: "POST",
+  }).then(() => undefined)
 }
 
 export { ApiRequestError }
