@@ -7,7 +7,11 @@ import {
   AuthSessionError,
   verifySession,
 } from "../services/auth"
-import { readSessionCookie, serializeSessionCookie } from "../services/sessionCookie"
+import {
+  readSessionCookie,
+  serializeExpiredSessionCookie,
+  serializeSessionCookie,
+} from "../services/sessionCookie"
 
 const loginRequestSchema = z.object({
   email: z.string().email(),
@@ -107,6 +111,11 @@ export function createAuthRoutes(options: AuthRoutesOptions = {}) {
 
       throw error
     }
+  })
+
+  routes.post("/logout", (c) => {
+    c.header("Set-Cookie", serializeExpiredSessionCookie())
+    return c.json({ ok: true })
   })
 
   return routes

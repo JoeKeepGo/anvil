@@ -26,6 +26,18 @@ function sessionCookie(response: Response): string {
   return cookie
 }
 
+function assertExpiredSessionCookie(response: Response): string {
+  const setCookie = response.headers.get("set-cookie") ?? ""
+
+  assert.match(setCookie, /^anvil_session=/)
+  assert.match(setCookie, /HttpOnly/i)
+  assert.match(setCookie, /SameSite=Lax/i)
+  assert.match(setCookie, /Path=\//i)
+  assert.match(setCookie, /Max-Age=0/i)
+
+  return sessionCookie(response)
+}
+
 describe("auth routes", () => {
   test("app mounts POST /api/auth/login", async () => {
     const originalNodeEnv = process.env.NODE_ENV
@@ -171,6 +183,79 @@ describe("auth routes", () => {
     })
   })
 
+  test("POST /logout returns safe success and clears the session cookie without requiring a cookie", async () => {
+    const routes = createAuthRoutes({ env: await authEnv() })
+
+    const response = await routes.request("/logout", { method: "POST" })
+    const body = await readJson(response)
+
+    assert.equal(response.status, 200)
+    assert.deepEqual(body, { ok: true })
+    assertExpiredSessionCookie(response)
+
+    const serializedBody = JSON.stringify(body)
+    assert.equal(serializedBody.includes("anvil_session"), false)
+    assert.equal(serializedBody.includes(adminPassword), false)
+    assert.equal(serializedBody.includes(sessionSecret), false)
+    assert.equal(serializedBody.includes("password"), false)
+    assert.equal(serializedBody.includes("secret"), false)
+    assert.equal(serializedBody.includes("authorization"), false)
+  })
+
+  test("POST /logout is idempotent for valid, invalid, and malformed cookies", async () => {
+    const routes = createAuthRoutes({ env: await authEnv() })
+    const login = await routes.request("/login", {
+      method: "POST",
+      body: JSON.stringify({ email: "admin@example.com", password: adminPassword }),
+      headers: { "content-type": "application/json" },
+    })
+
+    const valid = await routes.request("/logout", {
+      method: "POST",
+      headers: { cookie: sessionCookie(login) },
+    })
+    const invalid = await routes.request("/logout", {
+      method: "POST",
+      headers: { cookie: "anvil_session=tampered" },
+    })
+    const malformed = await routes.request("/logout", {
+      method: "POST",
+      headers: { cookie: "anvil_session=%E0%A4%A" },
+    })
+
+    for (const response of [valid, invalid, malformed]) {
+      assert.equal(response.status, 200)
+      assert.deepEqual(await readJson(response), { ok: true })
+      assertExpiredSessionCookie(response)
+    }
+  })
+
+  test("GET /me rejects the expired cookie returned by logout after a valid login", async () => {
+    const routes = createAuthRoutes({ env: await authEnv() })
+    const login = await routes.request("/login", {
+      method: "POST",
+      body: JSON.stringify({ email: "admin@example.com", password: adminPassword }),
+      headers: { "content-type": "application/json" },
+    })
+
+    const logout = await routes.request("/logout", {
+      method: "POST",
+      headers: { cookie: sessionCookie(login) },
+    })
+    const response = await routes.request("/me", {
+      headers: { cookie: assertExpiredSessionCookie(logout) },
+    })
+
+    assert.equal(response.status, 401)
+    assert.deepEqual(await readJson(response), {
+      error: {
+        code: "UNAUTHENTICATED",
+        message: "Authentication is required.",
+        details: {},
+      },
+    })
+  })
+
   test("GET /me rejects missing or invalid session cookies", async () => {
     const routes = createAuthRoutes({ env: await authEnv() })
 
@@ -214,6 +299,7 @@ describe("auth routes", () => {
 
       const health = await app.request("/api/health")
       const authMe = await app.request("/api/auth/me")
+      const authLogout = await app.request("/api/auth/logout", { method: "POST" })
       const server = await app.request("/api/server")
       const hostHealth = await app.request("/api/host/health")
       const instances = await app.request("/api/instances")
@@ -233,6 +319,10 @@ describe("auth routes", () => {
           details: {},
         },
       })
+
+      assert.equal(authLogout.status, 200)
+      assert.deepEqual(await readJson(authLogout), { ok: true })
+      assertExpiredSessionCookie(authLogout)
 
       for (const response of [
         server,

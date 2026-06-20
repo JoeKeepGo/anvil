@@ -11,6 +11,16 @@ export function serializeSessionCookie(sessionToken: string): string {
   ].join("; ")
 }
 
+export function serializeExpiredSessionCookie(): string {
+  return [
+    `${sessionCookieName}=`,
+    "HttpOnly",
+    "SameSite=Lax",
+    "Path=/",
+    "Max-Age=0",
+  ].join("; ")
+}
+
 export function readSessionCookie(cookieHeader: string | undefined): string | undefined {
   if (!cookieHeader) {
     return undefined
