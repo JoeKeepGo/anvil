@@ -4,6 +4,7 @@ import {
   type AgentResponse,
   AgentTimeoutError,
 } from "./agent"
+import type { ResourceVisibilityPolicy } from "./resourceVisibility"
 
 export interface InstancesAgent {
   execute(request: AgentRequest): Promise<AgentResponse>
@@ -40,7 +41,10 @@ export type InstancesResult = {
   body: InstancesSuccessBody | InstancesErrorBody
 }
 
-export async function getInstances(agent: InstancesAgent): Promise<InstancesResult> {
+export async function getInstances(
+  agent: InstancesAgent,
+  visibility?: ResourceVisibilityPolicy
+): Promise<InstancesResult> {
   try {
     const listResponse = await agent.execute({ method: "GET", path: "/1.0/instances" })
     const listError = mapNonSuccessResponse(listResponse)
@@ -53,9 +57,18 @@ export async function getInstances(agent: InstancesAgent): Promise<InstancesResu
       return malformedUpstreamResponse()
     }
 
+    const visibleNames =
+      visibility === undefined
+        ? undefined
+        : await visibility.filterVisibleResourceIds("INSTANCE", instanceNamesFromPaths(instancePaths))
+    const visibleInstancePaths =
+      visibleNames === undefined
+        ? instancePaths
+        : instancePaths.filter((path) => visibleNames.has(instanceNameFromPath(path)))
+
     const instances: InstanceSummary[] = []
 
-    for (const path of instancePaths) {
+    for (const path of visibleInstancePaths) {
       const detailResponse = await agent.execute({ method: "GET", path })
       const detailError = mapNonSuccessResponse(detailResponse)
       if (detailError) {
@@ -166,6 +179,19 @@ function readOptionalString(source: Record<string, unknown>, key: string): strin
 
 function isInstancePath(value: unknown): value is string {
   return typeof value === "string" && value.startsWith("/1.0/instances/")
+}
+
+function instanceNameFromPath(path: string): string {
+  const encodedName = path.slice("/1.0/instances/".length)
+  try {
+    return decodeURIComponent(encodedName)
+  } catch {
+    return encodedName
+  }
+}
+
+function instanceNamesFromPaths(paths: string[]): string[] {
+  return paths.map(instanceNameFromPath)
 }
 
 function agentUnavailable(): InstancesResult {

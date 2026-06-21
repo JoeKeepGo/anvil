@@ -6,12 +6,16 @@ import {
   operationsAgentConfigError,
   type OperationsAgent,
 } from "../services/operations"
+import {
+  resolveResourceVisibilityPolicy,
+  type ResourceVisibilityRouteOptions,
+} from "./resourceVisibility"
 
 interface ClosableOperationsAgent extends OperationsAgent {
   close?: () => void
 }
 
-export interface OperationRoutesOptions {
+export interface OperationRoutesOptions extends ResourceVisibilityRouteOptions {
   env?: NodeJS.ProcessEnv
   createClient?: (config: ServerConfig["agent"]) => ClosableOperationsAgent
 }
@@ -42,7 +46,13 @@ export function createOperationRoutes(options: OperationRoutesOptions = {}) {
     const client = createClient(config.agent)
 
     try {
-      const result = await getOperations(client)
+      const visibility = await resolveResourceVisibilityPolicy(c, {
+        env,
+        config,
+        sessionStore: options.sessionStore,
+        resourceVisibilityStore: options.resourceVisibilityStore,
+      })
+      const result = await getOperations(client, visibility)
       return c.json(result.body, result.httpStatus)
     } finally {
       client.close?.()

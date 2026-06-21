@@ -7,6 +7,10 @@ import {
   type InstanceDetailAgent,
 } from "../services/instanceDetail"
 import { agentConfigError, getInstances, type InstancesAgent } from "../services/instances"
+import {
+  resolveResourceVisibilityPolicy,
+  type ResourceVisibilityRouteOptions,
+} from "./resourceVisibility"
 
 interface ClosableInstancesAgent extends InstancesAgent {
   close?: () => void
@@ -16,7 +20,7 @@ interface ClosableInstanceDetailAgent extends InstanceDetailAgent {
   close?: () => void
 }
 
-export interface InstanceRoutesOptions {
+export interface InstanceRoutesOptions extends ResourceVisibilityRouteOptions {
   env?: NodeJS.ProcessEnv
   createClient?: (config: ServerConfig["agent"]) => ClosableInstancesAgent & ClosableInstanceDetailAgent
 }
@@ -47,7 +51,13 @@ export function createInstanceRoutes(options: InstanceRoutesOptions = {}) {
     const client = createClient(config.agent)
 
     try {
-      const result = await getInstances(client)
+      const visibility = await resolveResourceVisibilityPolicy(c, {
+        env,
+        config,
+        sessionStore: options.sessionStore,
+        resourceVisibilityStore: options.resourceVisibilityStore,
+      })
+      const result = await getInstances(client, visibility)
       return c.json(result.body, result.httpStatus)
     } finally {
       client.close?.()
@@ -71,34 +81,43 @@ export function createInstanceRoutes(options: InstanceRoutesOptions = {}) {
     const client = createClient(config.agent)
 
     try {
-      const result = await getInstanceDetail(client, c.req.param("name"))
+      const visibility = await resolveResourceVisibilityPolicy(c, {
+        env,
+        config,
+        sessionStore: options.sessionStore,
+        resourceVisibilityStore: options.resourceVisibilityStore,
+      })
+      const result = await getInstanceDetail(client, c.req.param("name"), visibility)
       return c.json(result.body, result.httpStatus)
     } finally {
       client.close?.()
     }
   })
 
+  mountUnsupportedInstanceMutationRoutes(routes)
   return routes
 }
 
 export const instanceRoutes = createInstanceRoutes()
 
-instanceRoutes.post("/instances/:name/start", async (c) => {
-  return c.json({ message: "start not yet implemented" }, 501)
-})
+function mountUnsupportedInstanceMutationRoutes(routes: Hono): void {
+  routes.post("/instances/:name/start", async (c) => {
+    return c.json({ message: "start not yet implemented" }, 501)
+  })
 
-instanceRoutes.post("/instances/:name/stop", async (c) => {
-  return c.json({ message: "stop not yet implemented" }, 501)
-})
+  routes.post("/instances/:name/stop", async (c) => {
+    return c.json({ message: "stop not yet implemented" }, 501)
+  })
 
-instanceRoutes.post("/instances/:name/restart", async (c) => {
-  return c.json({ message: "restart not yet implemented" }, 501)
-})
+  routes.post("/instances/:name/restart", async (c) => {
+    return c.json({ message: "restart not yet implemented" }, 501)
+  })
 
-instanceRoutes.delete("/instances/:name", async (c) => {
-  return c.json({ message: "delete not yet implemented" }, 501)
-})
+  routes.delete("/instances/:name", async (c) => {
+    return c.json({ message: "delete not yet implemented" }, 501)
+  })
 
-instanceRoutes.post("/instances", async (c) => {
-  return c.json({ message: "create not yet implemented" }, 501)
-})
+  routes.post("/instances", async (c) => {
+    return c.json({ message: "create not yet implemented" }, 501)
+  })
+}

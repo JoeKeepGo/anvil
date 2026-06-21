@@ -4,6 +4,7 @@ import {
   type AgentResponse,
   AgentTimeoutError,
 } from "./agent"
+import type { ResourceVisibilityPolicy } from "./resourceVisibility"
 
 export interface ImagesAgent {
   execute(request: AgentRequest): Promise<AgentResponse>
@@ -53,7 +54,10 @@ export type ImagesResult = {
   body: ImagesSuccessBody | ImagesErrorBody
 }
 
-export async function getImages(agent: ImagesAgent): Promise<ImagesResult> {
+export async function getImages(
+  agent: ImagesAgent,
+  visibility?: ResourceVisibilityPolicy
+): Promise<ImagesResult> {
   try {
     const response = await agent.execute({ method: "GET", path: "/1.0/images?recursion=1" })
     const responseError = mapNonSuccessResponse(response)
@@ -66,9 +70,22 @@ export async function getImages(agent: ImagesAgent): Promise<ImagesResult> {
       return malformedUpstreamResponse()
     }
 
+    const visibleFingerprints =
+      visibility === undefined
+        ? undefined
+        : await visibility.filterVisibleResourceIds(
+            "IMAGE",
+            images.map((image) => image.fingerprint)
+          )
+
     return {
       httpStatus: 200,
-      body: { images },
+      body: {
+        images:
+          visibleFingerprints === undefined
+            ? images
+            : images.filter((image) => visibleFingerprints.has(image.fingerprint)),
+      },
     }
   } catch (error) {
     if (error instanceof AgentTimeoutError || error instanceof AgentConnectionError) {

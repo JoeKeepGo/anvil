@@ -4,6 +4,7 @@ import {
   type AgentResponse,
   AgentTimeoutError,
 } from "./agent"
+import type { ResourceVisibilityPolicy } from "./resourceVisibility"
 
 export interface InstanceDetailAgent {
   execute(request: AgentRequest): Promise<AgentResponse>
@@ -57,10 +58,15 @@ export type InstanceDetailResult = {
 
 export async function getInstanceDetail(
   agent: InstanceDetailAgent,
-  name: string
+  name: string,
+  visibility?: ResourceVisibilityPolicy
 ): Promise<InstanceDetailResult> {
   if (!isSafeInstanceName(name)) {
     return invalidInstanceName()
+  }
+
+  if (visibility && !(await visibility.canReadResource("INSTANCE", name))) {
+    return instanceNotFound()
   }
 
   try {
@@ -285,6 +291,19 @@ function invalidInstanceName(): InstanceDetailResult {
       error: {
         code: "INVALID_INSTANCE_NAME",
         message: "Invalid instance name",
+        details: {},
+      },
+    },
+  }
+}
+
+function instanceNotFound(): InstanceDetailResult {
+  return {
+    httpStatus: 404,
+    body: {
+      error: {
+        code: "INSTANCE_NOT_FOUND",
+        message: "Instance not found",
         details: {},
       },
     },
