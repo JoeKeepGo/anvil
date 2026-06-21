@@ -134,6 +134,15 @@ type TenantProjectScopeQuery = {
         }
       }
     }
+    tenant: {
+      defaultProject: {
+        is: {
+          endpointBindings: {
+            some: TenantProjectEndpointBindingFilter
+          }
+        }
+      }
+    }
   }
   select: {
     projectId: true
@@ -150,6 +159,23 @@ type TenantProjectScopeQuery = {
     }
   }
   orderBy: Array<{ tenantId?: "asc"; projectId?: "asc" }>
+}
+
+type TenantProjectEndpointBindingFilter = {
+  status: "ACTIVE"
+  endpoint: {
+    status: "ACTIVE"
+    team: {
+      status: "ACTIVE"
+      memberships: {
+        some: {
+          userId: string
+          status: "ACTIVE"
+          team: { status: "ACTIVE" }
+        }
+      }
+    }
+  }
 }
 
 type TenantProjectScopeRow = {
@@ -450,25 +476,35 @@ export class PrismaAdminDataStore implements AdminDataStore {
 
   async getTenantProjectAccessScopes(userId: string): Promise<TenantProjectAccessScopes> {
     this.assertDatabaseConfigured()
+    const activeUserEndpointBindingFilter = {
+      status: "ACTIVE",
+      endpoint: {
+        status: "ACTIVE",
+        team: {
+          status: "ACTIVE",
+          memberships: {
+            some: {
+              userId,
+              status: "ACTIVE",
+              team: { status: "ACTIVE" },
+            },
+          },
+        },
+      },
+    } satisfies TenantProjectEndpointBindingFilter
     const rows = await this.prisma.projectTenant.findMany({
       where: {
         status: "ACTIVE",
         project: {
           endpointBindings: {
-            some: {
-              status: "ACTIVE",
-              endpoint: {
-                status: "ACTIVE",
-                team: {
-                  status: "ACTIVE",
-                  memberships: {
-                    some: {
-                      userId,
-                      status: "ACTIVE",
-                      team: { status: "ACTIVE" },
-                    },
-                  },
-                },
+            some: activeUserEndpointBindingFilter,
+          },
+        },
+        tenant: {
+          defaultProject: {
+            is: {
+              endpointBindings: {
+                some: activeUserEndpointBindingFilter,
               },
             },
           },

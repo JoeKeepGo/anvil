@@ -76,7 +76,7 @@ describe("Prisma admin identity mapping", () => {
     assert.equal(JSON.stringify(principal).includes("hash-that-must-not-appear"), false)
   })
 
-  test("derives tenant/project scopes from active team endpoint project bindings", async () => {
+  test("derives tenant/project scopes without expanding every tenant in a shared project", async () => {
     const store = new PrismaAdminDataStore(new TestPrismaAdminScopesClient(), {
       DATABASE_URL: "postgresql://example.invalid/anvil",
     })
@@ -86,12 +86,10 @@ describe("Prisma admin identity mapping", () => {
     assert.deepEqual(scopes, {
       tenants: [
         { tenantId: "tenant-a", status: "ACTIVE" },
-        { tenantId: "tenant-b", status: "ACTIVE" },
-        { tenantId: "tenant-archived", status: "ARCHIVED" },
       ],
       projects: [
         { projectId: "project-a", tenantId: "tenant-a", status: "ACTIVE" },
-        { projectId: "project-b", tenantId: "tenant-b", status: "ACTIVE" },
+        { projectId: "project-shared", tenantId: "tenant-a", status: "ACTIVE" },
       ],
     })
   })
@@ -104,40 +102,61 @@ class TestPrismaAdminScopesClient {
   readonly $transaction = {} as never
   readonly $executeRaw = {} as never
   readonly projectTenant = {
-    findMany: async (query: {
-      where: {
-        status: "ACTIVE"
-        project: {
-          endpointBindings: {
-            some: {
-              status: "ACTIVE"
-              endpoint: {
-                status: "ACTIVE"
-                team: {
-                  status: "ACTIVE"
-                  memberships: {
-                    some: {
-                      userId: string
-                      status: "ACTIVE"
-                      team: { status: "ACTIVE" }
-                    }
-                  }
-                }
-              }
-            }
-          }
+    findMany: async (query: { where: TestTenantProjectScopeWhere }) => {
+      assert.equal(query.where.project?.endpointBindings?.some?.endpoint.team.memberships.some.userId, "user-1")
+      assert.equal(
+        query.where.tenant?.defaultProject?.is?.endpointBindings?.some?.endpoint.team.memberships.some.userId,
+        "user-1"
+      )
+      return [
+        projectTenantScopeRow("project-a", "tenant-a", "ACTIVE", "ACTIVE", true),
+        projectTenantScopeRow("project-shared", "tenant-a", "ACTIVE", "ACTIVE", true),
+        projectTenantScopeRow("project-shared", "tenant-b", "ACTIVE", "ACTIVE", false),
+        projectTenantScopeRow("project-archived", "tenant-a", "ARCHIVED", "ACTIVE", true),
+        projectTenantScopeRow("project-shared", "tenant-a", "ACTIVE", "ACTIVE", true),
+      ].filter((row) => row.tenantDefaultProjectEndpointBound)
+    },
+  }
+}
+
+type TestTenantProjectScopeWhere = {
+  project?: {
+    endpointBindings?: {
+      some?: TestEndpointBindingFilter
+    }
+  }
+  tenant?: {
+    defaultProject?: {
+      is?: {
+        endpointBindings?: {
+          some?: TestEndpointBindingFilter
         }
       }
-    }) => {
-      assert.equal(query.where.project.endpointBindings.some.endpoint.team.memberships.some.userId, "user-1")
-      return [
-        projectTenantScopeRow("project-a", "tenant-a", "ACTIVE", "ACTIVE"),
-        projectTenantScopeRow("project-b", "tenant-b", "ACTIVE", "ACTIVE"),
-        projectTenantScopeRow("project-archived", "tenant-a", "ARCHIVED", "ACTIVE"),
-        projectTenantScopeRow("project-c", "tenant-archived", "ACTIVE", "ARCHIVED"),
-        projectTenantScopeRow("project-a", "tenant-a", "ACTIVE", "ACTIVE"),
-      ]
-    },
+    }
+  }
+}
+
+type TestEndpointBindingFilter = {
+  endpoint: {
+    team: {
+      memberships: {
+        some: {
+          userId: string
+        }
+      }
+    }
+  }
+}
+
+type TestTenantProjectScopeRow = {
+  projectId: string
+  tenantId: string
+  tenantDefaultProjectEndpointBound: boolean
+  project: {
+    status: "ACTIVE" | "ARCHIVED"
+  }
+  tenant: {
+    status: "ACTIVE" | "ARCHIVED"
   }
 }
 
@@ -145,11 +164,13 @@ function projectTenantScopeRow(
   projectId: string,
   tenantId: string,
   projectStatus: "ACTIVE" | "ARCHIVED",
-  tenantStatus: "ACTIVE" | "ARCHIVED"
-) {
+  tenantStatus: "ACTIVE" | "ARCHIVED",
+  tenantDefaultProjectEndpointBound: boolean
+): TestTenantProjectScopeRow {
   return {
     projectId,
     tenantId,
+    tenantDefaultProjectEndpointBound,
     project: {
       status: projectStatus,
     },
