@@ -33,7 +33,7 @@ export function AdminPageHeader({
 }
 
 export function AdminTableShell({ children }: { children: ReactNode }) {
-  return <div className="overflow-hidden rounded-lg border border-border">{children}</div>
+  return <div className="rounded-lg border border-border">{children}</div>
 }
 
 export function AdminEmptyState({
@@ -75,6 +75,21 @@ export function AdminErrorState({
   onRetry: () => void
 }) {
   return <ErrorAlert message={message} onRetry={onRetry} />
+}
+
+export function AdminForbiddenState({
+  title = "Capability unavailable",
+  description = "Your current capability summary does not allow this admin view.",
+}: {
+  title?: string
+  description?: string
+}) {
+  return (
+    <div className="max-w-2xl rounded-lg border border-border px-6 py-8">
+      <p className="text-sm font-medium">{title}</p>
+      <p className="mt-1 text-sm text-muted-foreground">{description}</p>
+    </div>
+  )
 }
 
 export function FormError({ message }: { message: string | null }) {

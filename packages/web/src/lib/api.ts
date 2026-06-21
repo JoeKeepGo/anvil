@@ -17,12 +17,26 @@ import type {
   BootstrapAdminInput,
   BootstrapStatus,
   CreateAdminEndpointInput,
+  CreateAdminProjectInput,
+  CreateAdminTenantInput,
+  CreateAdminTenantResponse,
   CreateAdminUserInput,
+  AdminProjectDetail,
   ManagedEndpoint,
+  ManagedEndpointProjectBinding,
+  ManagedProject,
+  ManagedProjectTenant,
+  ManagedTenant,
   ManagedTeam,
   ManagedUser,
   PermissionMatrix,
+  ProjectQuotaPolicy,
+  ProjectTenantQuotaAllocation,
+  QuotaInput,
+  TenantQuotaInput,
   UpdateAdminEndpointInput,
+  UpdateAdminProjectInput,
+  UpdateAdminTenantInput,
   UpdateAdminUserInput,
 } from "../types"
 
@@ -233,6 +247,180 @@ export function restoreAdminEndpoint(endpointId: string): Promise<ManagedEndpoin
     `/api/admin/endpoints/${encodeURIComponent(endpointId)}/restore`,
     { method: "POST" }
   ).then((response) => response.endpoint)
+}
+
+// Admin tenants
+export function fetchAdminTenants(): Promise<ManagedTenant[]> {
+  return apiFetch<{ tenants: ManagedTenant[] }>("/api/admin/tenants").then((response) => response.tenants)
+}
+
+export function fetchAdminTenant(tenantId: string): Promise<ManagedTenant> {
+  return apiFetch<{ tenant: ManagedTenant }>(`/api/admin/tenants/${encodeURIComponent(tenantId)}`).then(
+    (response) => response.tenant
+  )
+}
+
+export function createAdminTenant(input: CreateAdminTenantInput): Promise<CreateAdminTenantResponse> {
+  return apiFetch<CreateAdminTenantResponse>("/api/admin/tenants", {
+    method: "POST",
+    body: JSON.stringify(input),
+  })
+}
+
+export function updateAdminTenant(
+  tenantId: string,
+  input: UpdateAdminTenantInput
+): Promise<ManagedTenant> {
+  return apiFetch<{ tenant: ManagedTenant }>(`/api/admin/tenants/${encodeURIComponent(tenantId)}`, {
+    method: "PATCH",
+    body: JSON.stringify(input),
+  }).then((response) => response.tenant)
+}
+
+export function archiveAdminTenant(tenantId: string): Promise<ManagedTenant> {
+  return apiFetch<{ tenant: ManagedTenant }>(
+    `/api/admin/tenants/${encodeURIComponent(tenantId)}/archive`,
+    { method: "POST" }
+  ).then((response) => response.tenant)
+}
+
+export function restoreAdminTenant(tenantId: string): Promise<ManagedTenant> {
+  return apiFetch<{ tenant: ManagedTenant }>(
+    `/api/admin/tenants/${encodeURIComponent(tenantId)}/restore`,
+    { method: "POST" }
+  ).then((response) => response.tenant)
+}
+
+// Admin projects
+export function fetchAdminProjects(): Promise<ManagedProject[]> {
+  return apiFetch<{ projects: ManagedProject[] }>("/api/admin/projects").then(
+    (response) => response.projects
+  )
+}
+
+export function fetchAdminProject(projectId: string): Promise<AdminProjectDetail> {
+  return apiFetch<AdminProjectDetail>(`/api/admin/projects/${encodeURIComponent(projectId)}`)
+}
+
+export function createAdminProject(input: CreateAdminProjectInput): Promise<ManagedProject> {
+  return apiFetch<{ project: ManagedProject }>("/api/admin/projects", {
+    method: "POST",
+    body: JSON.stringify(input),
+  }).then((response) => response.project)
+}
+
+export function updateAdminProject(
+  projectId: string,
+  input: UpdateAdminProjectInput
+): Promise<ManagedProject> {
+  return apiFetch<{ project: ManagedProject }>(
+    `/api/admin/projects/${encodeURIComponent(projectId)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify(input),
+    }
+  ).then((response) => response.project)
+}
+
+export function archiveAdminProject(projectId: string): Promise<ManagedProject> {
+  return apiFetch<{ project: ManagedProject }>(
+    `/api/admin/projects/${encodeURIComponent(projectId)}/archive`,
+    { method: "POST" }
+  ).then((response) => response.project)
+}
+
+export function restoreAdminProject(projectId: string): Promise<ManagedProject> {
+  return apiFetch<{ project: ManagedProject }>(
+    `/api/admin/projects/${encodeURIComponent(projectId)}/restore`,
+    { method: "POST" }
+  ).then((response) => response.project)
+}
+
+export function addAdminProjectTenant(
+  projectId: string,
+  input: { tenantId: string; role: ManagedProjectTenant["role"] }
+): Promise<ManagedProjectTenant> {
+  return apiFetch<{ participant: ManagedProjectTenant }>(
+    `/api/admin/projects/${encodeURIComponent(projectId)}/tenants`,
+    {
+      method: "POST",
+      body: JSON.stringify(input),
+    }
+  ).then((response) => response.participant)
+}
+
+export function updateAdminProjectTenant(
+  projectId: string,
+  tenantId: string,
+  input: { role: ManagedProjectTenant["role"] }
+): Promise<ManagedProjectTenant> {
+  return apiFetch<{ participant: ManagedProjectTenant }>(
+    `/api/admin/projects/${encodeURIComponent(projectId)}/tenants/${encodeURIComponent(tenantId)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify(input),
+    }
+  ).then((response) => response.participant)
+}
+
+export function removeAdminProjectTenant(
+  projectId: string,
+  tenantId: string
+): Promise<ManagedProjectTenant> {
+  return apiFetch<{ participant: ManagedProjectTenant }>(
+    `/api/admin/projects/${encodeURIComponent(projectId)}/tenants/${encodeURIComponent(tenantId)}/remove`,
+    { method: "POST" }
+  ).then((response) => response.participant)
+}
+
+export function setAdminProjectQuota(
+  projectId: string,
+  input: QuotaInput
+): Promise<ProjectQuotaPolicy> {
+  return apiFetch<{ quota: ProjectQuotaPolicy }>(
+    `/api/admin/projects/${encodeURIComponent(projectId)}/quota`,
+    {
+      method: "PUT",
+      body: JSON.stringify(input),
+    }
+  ).then((response) => response.quota)
+}
+
+export function setAdminProjectTenantQuota(
+  projectId: string,
+  tenantId: string,
+  input: TenantQuotaInput
+): Promise<ProjectTenantQuotaAllocation> {
+  return apiFetch<{ quota: ProjectTenantQuotaAllocation }>(
+    `/api/admin/projects/${encodeURIComponent(projectId)}/tenants/${encodeURIComponent(tenantId)}/quota`,
+    {
+      method: "PUT",
+      body: JSON.stringify(input),
+    }
+  ).then((response) => response.quota)
+}
+
+export function addAdminProjectEndpointBinding(
+  projectId: string,
+  endpointId: string
+): Promise<ManagedEndpointProjectBinding> {
+  return apiFetch<{ binding: ManagedEndpointProjectBinding }>(
+    `/api/admin/projects/${encodeURIComponent(projectId)}/endpoints`,
+    {
+      method: "POST",
+      body: JSON.stringify({ endpointId }),
+    }
+  ).then((response) => response.binding)
+}
+
+export function removeAdminProjectEndpointBinding(
+  projectId: string,
+  endpointId: string
+): Promise<ManagedEndpointProjectBinding> {
+  return apiFetch<{ binding: ManagedEndpointProjectBinding }>(
+    `/api/admin/projects/${encodeURIComponent(projectId)}/endpoints/${encodeURIComponent(endpointId)}/remove`,
+    { method: "POST" }
+  ).then((response) => response.binding)
 }
 
 // Admin permissions and audit

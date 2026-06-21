@@ -2,18 +2,37 @@ import assert from "node:assert/strict"
 import { afterEach, describe, test } from "node:test"
 import {
   ApiRequestError,
+  addAdminProjectEndpointBinding,
+  addAdminProjectTenant,
+  archiveAdminProject,
+  archiveAdminTenant,
   bootstrapAdmin,
   createAdminEndpoint,
+  createAdminProject,
+  createAdminTenant,
   createAdminUser,
   fetchAdminAudit,
   fetchAdminEndpoints,
   fetchAdminPermissionMatrix,
+  fetchAdminProject,
+  fetchAdminProjects,
   fetchAdminTeams,
+  fetchAdminTenant,
+  fetchAdminTenants,
   fetchAdminUsers,
   fetchBootstrapStatus,
   fetchMe,
   login,
   logout,
+  removeAdminProjectEndpointBinding,
+  removeAdminProjectTenant,
+  restoreAdminProject,
+  restoreAdminTenant,
+  setAdminProjectQuota,
+  setAdminProjectTenantQuota,
+  updateAdminProject,
+  updateAdminProjectTenant,
+  updateAdminTenant,
 } from "../src/lib/api.ts"
 
 type FetchCall = {
@@ -64,6 +83,14 @@ describe("auth API helpers", () => {
         bootstrapComplete: true,
         canAdmin: true,
         globalActions: ["users:read", "users:write"],
+        tenants: [{ tenantId: "tenant-1", actions: ["tenants:read", "projects:read", "resources:read"] }],
+        projects: [
+          {
+            projectId: "project-1",
+            tenantId: "tenant-1",
+            actions: ["projects:read", "quotas:read", "resources:read"],
+          },
+        ],
         teams: [{ teamId: "team-1", actions: ["members:read", "endpoints:read"] }],
       },
     })
@@ -89,6 +116,14 @@ describe("auth API helpers", () => {
       bootstrapComplete: true,
       canAdmin: true,
       globalActions: ["users:read", "users:write"],
+      tenants: [{ tenantId: "tenant-1", actions: ["tenants:read", "projects:read", "resources:read"] }],
+      projects: [
+        {
+          projectId: "project-1",
+          tenantId: "tenant-1",
+          actions: ["projects:read", "quotas:read", "resources:read"],
+        },
+      ],
       teams: [{ teamId: "team-1", actions: ["members:read", "endpoints:read"] }],
     })
     assert.equal(JSON.stringify(session).includes("token"), false)
@@ -111,6 +146,8 @@ describe("auth API helpers", () => {
         bootstrapComplete: true,
         canAdmin: true,
         globalActions: ["audit:read"],
+        tenants: [],
+        projects: [],
         teams: [],
       },
     })
@@ -129,6 +166,8 @@ describe("auth API helpers", () => {
       bootstrapComplete: true,
       canAdmin: true,
       globalActions: ["audit:read"],
+      tenants: [],
+      projects: [],
       teams: [],
     })
     assert.equal(fetchCalls[0]?.input, "/api/auth/me")
@@ -210,6 +249,8 @@ describe("admin API helpers", () => {
         bootstrapComplete: true,
         canAdmin: true,
         globalActions: ["users:read"],
+        tenants: [],
+        projects: [],
         teams: [],
       },
     })
@@ -260,11 +301,15 @@ describe("admin API helpers", () => {
       matrix: {
         global: [{ role: "ADMIN", actions: ["users:read"] }],
         team: [{ role: "OWNER", actions: ["members:read"] }],
+        tenant: [{ scope: "ACTIVE_TENANT", actions: ["tenants:read", "projects:read"] }],
+        project: [{ scope: "ACTIVE_PROJECT", actions: ["projects:read", "quotas:read"] }],
       },
     })
     assert.deepEqual(await fetchAdminPermissionMatrix(), {
       global: [{ role: "ADMIN", actions: ["users:read"] }],
       team: [{ role: "OWNER", actions: ["members:read"] }],
+      tenant: [{ scope: "ACTIVE_TENANT", actions: ["tenants:read", "projects:read"] }],
+      project: [{ scope: "ACTIVE_PROJECT", actions: ["projects:read", "quotas:read"] }],
     })
     assert.equal(fetchCalls.at(-1)?.input, "/api/admin/permissions/matrix")
 
@@ -352,5 +397,316 @@ describe("admin API helpers", () => {
     assert.equal(endpoints[0]?.credentialConfigured, true)
     assert.equal("token" in endpoints[0]!, false)
     assert.equal("tokenCiphertext" in endpoints[0]!, false)
+  })
+
+  test("tenant helpers consume M10 envelopes and never expose secret material", async () => {
+    installJsonFetch(200, {
+      tenants: [
+        {
+          id: "tenant-1",
+          name: "Tenant A",
+          slug: "tenant-a",
+          status: "ACTIVE",
+          defaultProjectId: "project-1",
+        },
+      ],
+    })
+
+    const tenants = await fetchAdminTenants()
+
+    assert.deepEqual(tenants.map((tenant) => tenant.slug), ["tenant-a"])
+    assert.equal(fetchCalls.at(-1)?.input, "/api/admin/tenants")
+
+    installJsonFetch(200, {
+      tenant: {
+        id: "tenant-1",
+        name: "Tenant A",
+        slug: "tenant-a",
+        status: "ACTIVE",
+        defaultProjectId: "project-1",
+      },
+    })
+
+    assert.equal((await fetchAdminTenant("tenant-1")).defaultProjectId, "project-1")
+    assert.equal(fetchCalls.at(-1)?.input, "/api/admin/tenants/tenant-1")
+
+    installJsonFetch(200, {
+      tenant: {
+        id: "tenant-1",
+        name: "Tenant A Renamed",
+        slug: "tenant-a",
+        status: "ACTIVE",
+        defaultProjectId: "project-1",
+      },
+    })
+
+    assert.equal((await updateAdminTenant("tenant-1", { name: "Tenant A Renamed" })).name, "Tenant A Renamed")
+    assert.equal(fetchCalls.at(-1)?.input, "/api/admin/tenants/tenant-1")
+    assert.equal(fetchCalls.at(-1)?.init?.method, "PATCH")
+
+    installJsonFetch(201, {
+      tenant: {
+        id: "tenant-2",
+        name: "Tenant B",
+        slug: "tenant-b",
+        status: "ACTIVE",
+        defaultProjectId: "project-2",
+      },
+      defaultProject: {
+        id: "project-2",
+        name: "Tenant B Default",
+        slug: "default",
+        status: "ACTIVE",
+        ownerTenantId: "tenant-2",
+      },
+    })
+
+    const created = await createAdminTenant({ name: "Tenant B", slug: "tenant-b" })
+
+    assert.equal(created.tenant.defaultProjectId, "project-2")
+    assert.equal(created.defaultProject.slug, "default")
+    assert.equal(fetchCalls.at(-1)?.input, "/api/admin/tenants")
+    assert.equal(fetchCalls.at(-1)?.init?.method, "POST")
+    assert.equal(JSON.stringify(created).includes("tokenCiphertext"), false)
+    assert.equal(JSON.stringify(created).includes("passwordHash"), false)
+
+    installJsonFetch(200, {
+      tenant: {
+        id: "tenant-2",
+        name: "Tenant B",
+        slug: "tenant-b",
+        status: "ARCHIVED",
+        defaultProjectId: "project-2",
+      },
+    })
+    assert.equal((await archiveAdminTenant("tenant-2")).status, "ARCHIVED")
+    assert.equal(fetchCalls.at(-1)?.input, "/api/admin/tenants/tenant-2/archive")
+    assert.equal(fetchCalls.at(-1)?.init?.method, "POST")
+
+    installJsonFetch(200, {
+      tenant: {
+        id: "tenant-2",
+        name: "Tenant B",
+        slug: "tenant-b",
+        status: "ACTIVE",
+        defaultProjectId: "project-2",
+      },
+    })
+    assert.equal((await restoreAdminTenant("tenant-2")).status, "ACTIVE")
+    assert.equal(fetchCalls.at(-1)?.input, "/api/admin/tenants/tenant-2/restore")
+  })
+
+  test("project helpers consume detail, quota, allocation, and binding contracts", async () => {
+    installJsonFetch(200, {
+      projects: [
+        {
+          id: "project-1",
+          name: "Project A",
+          slug: "project-a",
+          status: "ACTIVE",
+          ownerTenantId: "tenant-1",
+        },
+      ],
+    })
+
+    const projects = await fetchAdminProjects()
+
+    assert.deepEqual(projects.map((project) => project.slug), ["project-a"])
+    assert.equal(fetchCalls.at(-1)?.input, "/api/admin/projects")
+
+    installJsonFetch(200, {
+      project: {
+        id: "project-1",
+        name: "Project A",
+        slug: "project-a",
+        status: "ACTIVE",
+        ownerTenantId: "tenant-1",
+      },
+      participants: [
+        {
+          id: "project-tenant-1",
+          projectId: "project-1",
+          tenantId: "tenant-1",
+          role: "OWNER",
+          status: "ACTIVE",
+        },
+      ],
+      quota: {
+        projectId: "project-1",
+        maxVcpu: 8,
+        maxMemoryBytes: null,
+        maxDiskBytes: null,
+        maxInstances: 4,
+        maxIpv6Addresses: null,
+      },
+      tenantQuotas: [],
+      endpointBindings: [
+        {
+          id: "binding-1",
+          endpointId: "endpoint-1",
+          projectId: "project-1",
+          status: "ACTIVE",
+        },
+      ],
+    })
+
+    const detail = await fetchAdminProject("project-1")
+
+    assert.equal(detail.quota?.maxVcpu, 8)
+    assert.equal(detail.participants[0]?.tenantId, "tenant-1")
+    assert.equal(detail.endpointBindings[0]?.endpointId, "endpoint-1")
+    assert.equal(JSON.stringify(detail).includes("tokenCiphertext"), false)
+    assert.equal(JSON.stringify(detail).includes("endpoint-token"), false)
+
+    installJsonFetch(201, {
+      project: {
+        id: "project-2",
+        name: "Project B",
+        slug: "project-b",
+        status: "ACTIVE",
+        ownerTenantId: "tenant-1",
+      },
+    })
+
+    await createAdminProject({ ownerTenantId: "tenant-1", name: "Project B", slug: "project-b" })
+    assert.equal(fetchCalls.at(-1)?.input, "/api/admin/projects")
+    assert.equal(fetchCalls.at(-1)?.init?.method, "POST")
+
+    installJsonFetch(200, {
+      project: {
+        id: "project-2",
+        name: "Project B Renamed",
+        slug: "project-b",
+        status: "ACTIVE",
+        ownerTenantId: "tenant-1",
+      },
+    })
+    await updateAdminProject("project-2", { name: "Project B Renamed" })
+    assert.equal(fetchCalls.at(-1)?.input, "/api/admin/projects/project-2")
+    assert.equal(fetchCalls.at(-1)?.init?.method, "PATCH")
+
+    installJsonFetch(201, {
+      participant: {
+        id: "project-tenant-2",
+        projectId: "project-1",
+        tenantId: "tenant-2",
+        role: "PARTICIPANT",
+        status: "ACTIVE",
+      },
+    })
+    await addAdminProjectTenant("project-1", { tenantId: "tenant-2", role: "PARTICIPANT" })
+    assert.equal(fetchCalls.at(-1)?.input, "/api/admin/projects/project-1/tenants")
+
+    installJsonFetch(200, {
+      participant: {
+        id: "project-tenant-2",
+        projectId: "project-1",
+        tenantId: "tenant-2",
+        role: "OWNER",
+        status: "ACTIVE",
+      },
+    })
+    await updateAdminProjectTenant("project-1", "tenant-2", { role: "OWNER" })
+    assert.equal(fetchCalls.at(-1)?.input, "/api/admin/projects/project-1/tenants/tenant-2")
+    assert.equal(fetchCalls.at(-1)?.init?.method, "PATCH")
+
+    installJsonFetch(200, {
+      quota: {
+        projectId: "project-1",
+        maxVcpu: 16,
+        maxMemoryBytes: 34359738368,
+        maxDiskBytes: null,
+        maxInstances: 8,
+        maxIpv6Addresses: null,
+      },
+    })
+    await setAdminProjectQuota("project-1", {
+      maxVcpu: 16,
+      maxMemoryBytes: 34359738368,
+      maxDiskBytes: null,
+      maxInstances: 8,
+      maxIpv6Addresses: null,
+    })
+    assert.equal(fetchCalls.at(-1)?.input, "/api/admin/projects/project-1/quota")
+    assert.equal(fetchCalls.at(-1)?.init?.method, "PUT")
+
+    installJsonFetch(200, {
+      quota: {
+        projectId: "project-1",
+        tenantId: "tenant-2",
+        maxVcpu: 4,
+        maxMemoryBytes: null,
+        maxDiskBytes: null,
+        maxInstances: 2,
+        maxIpv6Addresses: null,
+      },
+    })
+    await setAdminProjectTenantQuota("project-1", "tenant-2", {
+      maxVcpu: 4,
+      maxMemoryBytes: null,
+      maxDiskBytes: null,
+      maxInstances: 2,
+      maxIpv6Addresses: null,
+    })
+    assert.equal(fetchCalls.at(-1)?.input, "/api/admin/projects/project-1/tenants/tenant-2/quota")
+
+    installJsonFetch(201, {
+      binding: {
+        id: "binding-1",
+        endpointId: "endpoint-1",
+        projectId: "project-1",
+        status: "ACTIVE",
+      },
+    })
+    await addAdminProjectEndpointBinding("project-1", "endpoint-1")
+    assert.equal(fetchCalls.at(-1)?.input, "/api/admin/projects/project-1/endpoints")
+    assert.equal(JSON.parse(String(fetchCalls.at(-1)?.init?.body)).endpointId, "endpoint-1")
+
+    installJsonFetch(200, {
+      binding: {
+        id: "binding-1",
+        endpointId: "endpoint-1",
+        projectId: "project-1",
+        status: "REMOVED",
+      },
+    })
+    await removeAdminProjectEndpointBinding("project-1", "endpoint-1")
+    assert.equal(fetchCalls.at(-1)?.input, "/api/admin/projects/project-1/endpoints/endpoint-1/remove")
+
+    installJsonFetch(200, {
+      participant: {
+        id: "project-tenant-2",
+        projectId: "project-1",
+        tenantId: "tenant-2",
+        role: "OWNER",
+        status: "REMOVED",
+      },
+    })
+    await removeAdminProjectTenant("project-1", "tenant-2")
+    assert.equal(fetchCalls.at(-1)?.input, "/api/admin/projects/project-1/tenants/tenant-2/remove")
+
+    installJsonFetch(200, {
+      project: {
+        id: "project-1",
+        name: "Project A",
+        slug: "project-a",
+        status: "ARCHIVED",
+        ownerTenantId: "tenant-1",
+      },
+    })
+    assert.equal((await archiveAdminProject("project-1")).status, "ARCHIVED")
+    assert.equal(fetchCalls.at(-1)?.input, "/api/admin/projects/project-1/archive")
+
+    installJsonFetch(200, {
+      project: {
+        id: "project-1",
+        name: "Project A",
+        slug: "project-a",
+        status: "ACTIVE",
+        ownerTenantId: "tenant-1",
+      },
+    })
+    assert.equal((await restoreAdminProject("project-1")).status, "ACTIVE")
+    assert.equal(fetchCalls.at(-1)?.input, "/api/admin/projects/project-1/restore")
   })
 })

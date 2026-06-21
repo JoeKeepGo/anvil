@@ -1,4 +1,10 @@
-import type { AdminAccessSummary, GlobalAction, TeamAction } from "@/types"
+import type {
+  AdminAccessSummary,
+  GlobalAction,
+  ProjectAction,
+  TeamAction,
+  TenantAction,
+} from "@/types"
 
 export function canUseAdminConsole(access: AdminAccessSummary): boolean {
   return access.bootstrapComplete && access.canAdmin
@@ -31,4 +37,26 @@ export function hasTeamAction(
 
 export function hasAnyTeamAction(access: AdminAccessSummary, action: TeamAction): boolean {
   return access.teams.some((teamAccess) => teamAccess.actions.includes(action))
+}
+
+export function hasTenantAction(
+  access: AdminAccessSummary,
+  tenantId: string,
+  action: TenantAction
+): boolean {
+  return (
+    access.tenants.find((tenantAccess) => tenantAccess.tenantId === tenantId)?.actions.includes(action) ??
+    false
+  )
+}
+
+export function hasProjectAction(
+  access: AdminAccessSummary,
+  projectId: string,
+  action: ProjectAction
+): boolean {
+  return (
+    access.projects.find((projectAccess) => projectAccess.projectId === projectId)?.actions.includes(action) ??
+    false
+  )
 }

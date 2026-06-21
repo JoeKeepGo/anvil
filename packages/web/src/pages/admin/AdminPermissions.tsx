@@ -46,11 +46,44 @@ export function AdminPermissions() {
         <div className="grid gap-4 xl:grid-cols-2">
           <MatrixTable title="Global roles" rows={matrix.data.global} />
           <MatrixTable title="Team roles" rows={matrix.data.team} />
+          <ScopeMatrixTable title="Tenant scopes" rows={matrix.data.tenant} />
+          <ScopeMatrixTable title="Project scopes" rows={matrix.data.project} />
         </div>
       ) : (
         <AdminEmptyState title="No permissions returned" description="The permission matrix was empty." />
       )}
     </div>
+  )
+}
+
+function ScopeMatrixTable({
+  title,
+  rows,
+}: {
+  title: string
+  rows: Array<{ scope: string; actions: string[] }>
+}) {
+  return (
+    <AdminTableShell>
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>{title}</TableHead>
+            <TableHead>Actions</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {rows.map((row) => (
+            <TableRow key={row.scope}>
+              <TableCell className="font-medium">{row.scope}</TableCell>
+              <TableCell>
+                <ActionBadges actions={row.actions} />
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </AdminTableShell>
   )
 }
 
@@ -75,22 +108,28 @@ function MatrixTable({
             <TableRow key={row.role}>
               <TableCell className="font-medium">{row.role}</TableCell>
               <TableCell>
-                <div className="flex max-w-[34rem] flex-wrap gap-1">
-                  {row.actions.length === 0 ? (
-                    <span className="text-muted-foreground">None</span>
-                  ) : (
-                    row.actions.map((action) => (
-                      <Badge key={action} variant="outline">
-                        {action}
-                      </Badge>
-                    ))
-                  )}
-                </div>
+                <ActionBadges actions={row.actions} />
               </TableCell>
             </TableRow>
           ))}
         </TableBody>
       </Table>
     </AdminTableShell>
+  )
+}
+
+function ActionBadges({ actions }: { actions: string[] }) {
+  return (
+    <div className="flex max-w-[34rem] flex-wrap gap-1">
+      {actions.length === 0 ? (
+        <span className="text-muted-foreground">None</span>
+      ) : (
+        actions.map((action) => (
+          <Badge key={action} variant="outline">
+            {action}
+          </Badge>
+        ))
+      )}
+    </div>
   )
 }

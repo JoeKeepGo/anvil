@@ -12,8 +12,10 @@ import { AdminBootstrap } from "@/pages/admin/AdminBootstrap"
 import { AdminEndpoints } from "@/pages/admin/AdminEndpoints"
 import { AdminOverview } from "@/pages/admin/AdminOverview"
 import { AdminPermissions } from "@/pages/admin/AdminPermissions"
+import { AdminProjectDetail, AdminProjects } from "@/pages/admin/AdminProjects"
 import { AdminRoute } from "@/pages/admin/AdminRoute"
 import { AdminTeams } from "@/pages/admin/AdminTeams"
+import { AdminTenantDetail, AdminTenants } from "@/pages/admin/AdminTenants"
 import { AdminUsers } from "@/pages/admin/AdminUsers"
 
 export function App() {
@@ -34,6 +36,10 @@ export function App() {
             <Route path="users" element={<AdminUsers />} />
             <Route path="teams" element={<AdminTeams />} />
             <Route path="endpoints" element={<AdminEndpoints />} />
+            <Route path="tenants" element={<AdminTenants />} />
+            <Route path="tenants/:tenantId" element={<AdminTenantDetail />} />
+            <Route path="projects" element={<AdminProjects />} />
+            <Route path="projects/:projectId" element={<AdminProjectDetail />} />
             <Route path="permissions" element={<AdminPermissions />} />
             <Route path="audit" element={<AdminAudit />} />
           </Route>

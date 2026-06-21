@@ -2,6 +2,8 @@ import { Link, useOutletContext } from "react-router-dom"
 import {
   ClipboardList,
   KeyRound,
+  Network,
+  PanelsTopLeft,
   ShieldCheck,
   Users,
   UsersRound,
@@ -39,6 +41,22 @@ const sections = [
       hasAnyTeamAction(context.session.access, "endpoints:read"),
   },
   {
+    to: "/admin/tenants",
+    title: "Tenants",
+    detail: "Manage customer boundaries and default projects.",
+    icon: Network,
+    enabled: (context: AppShellContext) =>
+      hasAnyGlobalAction(context.session.access, ["tenants:read", "tenants:write"]),
+  },
+  {
+    to: "/admin/projects",
+    title: "Projects",
+    detail: "Manage participation, quota policy, allocations, and endpoint bindings.",
+    icon: PanelsTopLeft,
+    enabled: (context: AppShellContext) =>
+      hasAnyGlobalAction(context.session.access, ["projects:read", "projects:write"]),
+  },
+  {
     to: "/admin/permissions",
     title: "Permissions",
     detail: "Inspect the backend permission matrix.",
@@ -64,7 +82,7 @@ export function AdminOverview() {
     <div className="flex flex-col gap-6">
       <AdminPageHeader
         title="Admin"
-        description="Management surface for users, teams, endpoints, permissions, and audit history."
+        description="Management surface for users, teams, endpoints, tenants, projects, permissions, and audit history."
       />
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
