@@ -3,6 +3,8 @@ import { describe, test } from "node:test"
 import {
   buildAccessSummary,
   canPerformGlobalAction,
+  canPerformProjectAction,
+  canPerformTenantAction,
   canPerformTeamAction,
   getPermissionMatrix,
   globalAdminActions,
@@ -34,6 +36,8 @@ describe("admin permission evaluator", () => {
       bootstrapComplete: true,
       canAdmin: true,
       globalActions: globalAdminActions,
+      tenants: [],
+      projects: [],
       teams: [
         {
           teamId: "team-1",
@@ -45,6 +49,47 @@ describe("admin permission evaluator", () => {
     assert.equal(access.globalActions.includes("users:write"), true)
     assert.equal(canPerformTeamAction(principal, "team-1", "endpoints:write"), true)
     assert.equal(access.teams[0]?.actions.includes("endpoints:write"), true)
+  })
+
+  test("derives active tenant and project capability scopes without leaking archived scopes", () => {
+    const principal: AdminPrincipal = {
+      id: "user-1",
+      email: "member@example.com",
+      name: "Member User",
+      status: "ACTIVE",
+      globalRole: "MEMBER",
+      teams: [],
+    }
+
+    const access = buildAccessSummary(principal, true, {
+      tenants: [
+        { tenantId: "tenant-1", status: "ACTIVE" },
+        { tenantId: "tenant-archived", status: "ARCHIVED" },
+      ],
+      projects: [
+        { projectId: "project-1", tenantId: "tenant-1", status: "ACTIVE" },
+        { projectId: "project-archived", tenantId: "tenant-1", status: "ARCHIVED" },
+      ],
+    })
+
+    assert.deepEqual(access.tenants, [
+      {
+        tenantId: "tenant-1",
+        actions: ["tenants:read", "projects:read", "resources:read"],
+      },
+    ])
+    assert.deepEqual(access.projects, [
+      {
+        projectId: "project-1",
+        tenantId: "tenant-1",
+        actions: ["projects:read", "quotas:read", "resources:read"],
+      },
+    ])
+    assert.equal(access.canAdmin, true)
+    assert.equal(canPerformTenantAction(access, "tenant-1", "resources:read"), true)
+    assert.equal(canPerformTenantAction(access, "tenant-archived", "resources:read"), false)
+    assert.equal(canPerformProjectAction(access, "project-1", "quotas:read"), true)
+    assert.equal(canPerformProjectAction(access, "project-archived", "quotas:read"), false)
   })
 
   test("does not grant capabilities to disabled users or archived memberships", () => {
@@ -79,18 +124,28 @@ describe("admin permission evaluator", () => {
       ],
     }
 
-    assert.deepEqual(buildAccessSummary(disabled, true), {
-      bootstrapComplete: true,
-      canAdmin: false,
-      globalActions: [],
-      teams: [],
-    })
+    assert.deepEqual(
+      buildAccessSummary(disabled, true, {
+        tenants: [{ tenantId: "tenant-1", status: "ACTIVE" }],
+        projects: [{ projectId: "project-1", tenantId: "tenant-1", status: "ACTIVE" }],
+      }),
+      {
+        bootstrapComplete: true,
+        canAdmin: false,
+        globalActions: [],
+        tenants: [],
+        projects: [],
+        teams: [],
+      }
+    )
     assert.equal(canPerformGlobalAction(disabled, "users:read"), false)
     assert.equal(canPerformTeamAction(disabled, "team-1", "members:read"), false)
     assert.deepEqual(buildAccessSummary(archivedTeam, true), {
       bootstrapComplete: true,
       canAdmin: false,
       globalActions: [],
+      tenants: [],
+      projects: [],
       teams: [],
     })
     assert.equal(canPerformTeamAction(archivedTeam, "team-2", "members:read"), false)
@@ -120,6 +175,18 @@ describe("admin permission evaluator", () => {
         {
           role: "VIEWER",
           actions: ["members:read", "endpoints:read", "audit:read"],
+        },
+      ],
+      tenant: [
+        {
+          scope: "ACTIVE_TENANT",
+          actions: ["tenants:read", "projects:read", "resources:read"],
+        },
+      ],
+      project: [
+        {
+          scope: "ACTIVE_PROJECT",
+          actions: ["projects:read", "quotas:read", "resources:read"],
         },
       ],
     })

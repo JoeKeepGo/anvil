@@ -85,7 +85,24 @@ describe("admin bootstrap routes", () => {
       access: {
         bootstrapComplete: true,
         canAdmin: true,
-        globalActions: ["users:read", "users:write", "teams:read", "teams:write", "endpoints:read", "endpoints:write", "audit:read"],
+        globalActions: [
+          "users:read",
+          "users:write",
+          "teams:read",
+          "teams:write",
+          "endpoints:read",
+          "endpoints:write",
+          "audit:read",
+          "tenants:read",
+          "tenants:write",
+          "projects:read",
+          "projects:write",
+          "quotas:read",
+          "quotas:write",
+          "resources:read",
+        ],
+        tenants: [],
+        projects: [],
         teams: [
           {
             teamId: "team-1",

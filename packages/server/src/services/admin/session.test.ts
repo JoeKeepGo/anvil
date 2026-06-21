@@ -14,6 +14,7 @@ import type {
   AdminDataStore,
   AdminPrincipal,
   CreateBootstrapAdminRecord,
+  TenantProjectAccessScopes,
 } from "./session"
 
 const adminPassword = "correct horse battery staple"
@@ -71,6 +72,10 @@ describe("admin database session service", () => {
       ],
     })
     assert.equal(result.access.canAdmin, true)
+    assert.equal(result.access.globalActions.includes("tenants:write"), true)
+    assert.equal(result.access.globalActions.includes("projects:write"), true)
+    assert.deepEqual(result.access.tenants, [])
+    assert.deepEqual(result.access.projects, [])
     assert.equal(result.access.globalActions.includes("users:write"), true)
     assert.equal(result.access.teams[0]?.actions.includes("endpoints:write"), true)
     assert.equal(typeof result.sessionToken, "string")
@@ -176,6 +181,8 @@ describe("admin database session service", () => {
         bootstrapComplete: true,
         canAdmin: true,
         globalActions: [],
+        tenants: [],
+        projects: [],
         teams: [
           {
             teamId: "team-1",
@@ -191,6 +198,53 @@ describe("admin database session service", () => {
       DisabledUserError
     )
   })
+
+  test("includes active tenant and project scopes from the backing store", async () => {
+    const store = new TestAdminStore()
+    const user = await store.addUser({
+      id: "user-1",
+      email: "tenant-user@example.com",
+      name: "Tenant User",
+      password: adminPassword,
+      status: "ACTIVE",
+      globalRole: "MEMBER",
+      teams: [],
+    })
+    store.setTenantProjectScopes(user.id, {
+      tenants: [{ tenantId: "tenant-1", status: "ACTIVE" }],
+      projects: [{ projectId: "project-1", tenantId: "tenant-1", status: "ACTIVE" }],
+    })
+    const sessionToken = signAdminSession({ ANVIL_SESSION_SECRET: sessionSecret }, user)
+
+    const login = await authenticateAdminUser(
+      store,
+      { ANVIL_SESSION_SECRET: sessionSecret },
+      "tenant-user@example.com",
+      adminPassword
+    )
+    const current = await resolveCurrentAdminUser(
+      store,
+      { ANVIL_SESSION_SECRET: sessionSecret },
+      sessionToken
+    )
+
+    for (const result of [login, current]) {
+      assert.deepEqual(result.access.tenants, [
+        {
+          tenantId: "tenant-1",
+          actions: ["tenants:read", "projects:read", "resources:read"],
+        },
+      ])
+      assert.deepEqual(result.access.projects, [
+        {
+          projectId: "project-1",
+          tenantId: "tenant-1",
+          actions: ["projects:read", "quotas:read", "resources:read"],
+        },
+      ])
+      assert.equal(result.access.canAdmin, true)
+    }
+  })
 })
 
 type TestUserInput = AdminPrincipal & { password: string }
@@ -198,6 +252,7 @@ type TestUserInput = AdminPrincipal & { password: string }
 class TestAdminStore implements AdminDataStore {
   private bootstrapComplete: boolean
   private users = new Map<string, AdminPrincipal & { passwordHash: string }>()
+  private scopes = new Map<string, TenantProjectAccessScopes>()
 
   constructor(options: { bootstrapComplete?: boolean } = {}) {
     this.bootstrapComplete = options.bootstrapComplete ?? true
@@ -240,6 +295,10 @@ class TestAdminStore implements AdminDataStore {
 
   async recordAudit(_entry: AdminAuditEntry): Promise<void> {}
 
+  async getTenantProjectAccessScopes(userId: string): Promise<TenantProjectAccessScopes> {
+    return this.scopes.get(userId) ?? { tenants: [], projects: [] }
+  }
+
   async addUser(input: TestUserInput): Promise<AdminPrincipal & { passwordHash: string }> {
     const user: AdminPrincipal & { passwordHash: string } = {
       id: input.id,
@@ -258,5 +317,9 @@ class TestAdminStore implements AdminDataStore {
     const user = this.users.get(userId)
     assert.ok(user)
     this.users.set(userId, { ...user, status: "DISABLED" })
+  }
+
+  setTenantProjectScopes(userId: string, scopes: TenantProjectAccessScopes): void {
+    this.scopes.set(userId, scopes)
   }
 }
