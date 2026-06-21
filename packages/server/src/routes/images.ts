@@ -2,12 +2,16 @@ import { Hono } from "hono"
 import { ConfigError, parseServerConfig, type ServerConfig } from "../config"
 import { AgentClient } from "../services/agent"
 import { getImages, imagesAgentConfigError, type ImagesAgent } from "../services/images"
+import {
+  resolveResourceVisibilityPolicy,
+  type ResourceVisibilityRouteOptions,
+} from "./resourceVisibility"
 
 interface ClosableImagesAgent extends ImagesAgent {
   close?: () => void
 }
 
-export interface ImageRoutesOptions {
+export interface ImageRoutesOptions extends ResourceVisibilityRouteOptions {
   env?: NodeJS.ProcessEnv
   createClient?: (config: ServerConfig["agent"]) => ClosableImagesAgent
 }
@@ -38,7 +42,13 @@ export function createImageRoutes(options: ImageRoutesOptions = {}) {
     const client = createClient(config.agent)
 
     try {
-      const result = await getImages(client)
+      const visibility = await resolveResourceVisibilityPolicy(c, {
+        env,
+        config,
+        sessionStore: options.sessionStore,
+        resourceVisibilityStore: options.resourceVisibilityStore,
+      })
+      const result = await getImages(client, visibility)
       return c.json(result.body, result.httpStatus)
     } finally {
       client.close?.()

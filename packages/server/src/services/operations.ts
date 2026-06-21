@@ -4,6 +4,7 @@ import {
   type AgentResponse,
   AgentTimeoutError,
 } from "./agent"
+import type { ResourceVisibilityPolicy } from "./resourceVisibility"
 
 export interface OperationsAgent {
   execute(request: AgentRequest): Promise<AgentResponse>
@@ -44,7 +45,10 @@ export type OperationsResult = {
   body: OperationsSuccessBody | OperationsErrorBody
 }
 
-export async function getOperations(agent: OperationsAgent): Promise<OperationsResult> {
+export async function getOperations(
+  agent: OperationsAgent,
+  visibility?: ResourceVisibilityPolicy
+): Promise<OperationsResult> {
   try {
     const response = await agent.execute({ method: "GET", path: "/1.0/operations" })
     const responseError = mapNonSuccessResponse(response)
@@ -57,9 +61,22 @@ export async function getOperations(agent: OperationsAgent): Promise<OperationsR
       return malformedUpstreamResponse()
     }
 
+    const visibleOperationIds =
+      visibility === undefined
+        ? undefined
+        : await visibility.filterVisibleResourceIds(
+            "OPERATION",
+            operations.map((operation) => operation.id)
+          )
+
     return {
       httpStatus: 200,
-      body: { operations },
+      body: {
+        operations:
+          visibleOperationIds === undefined
+            ? operations
+            : operations.filter((operation) => visibleOperationIds.has(operation.id)),
+      },
     }
   } catch (error) {
     if (error instanceof AgentTimeoutError || error instanceof AgentConnectionError) {

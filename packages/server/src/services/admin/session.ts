@@ -111,6 +111,69 @@ export interface AdminDataStore {
   recordAudit(entry: AdminAuditEntry): Promise<void>
 }
 
+type TenantProjectScopeQuery = {
+  where: {
+    status: "ACTIVE"
+    project: {
+      endpointBindings: {
+        some: {
+          status: "ACTIVE"
+          endpoint: {
+            status: "ACTIVE"
+            team: {
+              status: "ACTIVE"
+              memberships: {
+                some: {
+                  userId: string
+                  status: "ACTIVE"
+                  team: { status: "ACTIVE" }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  select: {
+    projectId: true
+    tenantId: true
+    project: {
+      select: {
+        status: true
+      }
+    }
+    tenant: {
+      select: {
+        status: true
+      }
+    }
+  }
+  orderBy: Array<{ tenantId?: "asc"; projectId?: "asc" }>
+}
+
+type TenantProjectScopeRow = {
+  projectId: string
+  tenantId: string
+  project: {
+    status: "ACTIVE" | "ARCHIVED"
+  }
+  tenant: {
+    status: "ACTIVE" | "ARCHIVED"
+  }
+}
+
+interface PrismaAdminSessionClient {
+  user: PrismaClient["user"]
+  team: PrismaClient["team"]
+  auditLog: PrismaClient["auditLog"]
+  $transaction: PrismaClient["$transaction"]
+  $executeRaw: PrismaClient["$executeRaw"]
+  projectTenant: {
+    findMany(query: TenantProjectScopeQuery): Promise<TenantProjectScopeRow[]>
+  }
+}
+
 export interface AuthResult {
   user: AdminPrincipal
   access: BrowserAccessSummary
@@ -306,7 +369,7 @@ export function mapPrismaUserToAdminPrincipal(user: PrismaUserWithMemberships): 
 
 export class PrismaAdminDataStore implements AdminDataStore {
   constructor(
-    private readonly prisma = new PrismaClient(),
+    private readonly prisma: PrismaAdminSessionClient = new PrismaClient(),
     private readonly env: NodeJS.ProcessEnv = process.env
   ) {}
 
@@ -385,9 +448,50 @@ export class PrismaAdminDataStore implements AdminDataStore {
     return user ? mapPrismaUserToAdminPrincipal(user) : null
   }
 
-  async getTenantProjectAccessScopes(_userId: string): Promise<TenantProjectAccessScopes> {
+  async getTenantProjectAccessScopes(userId: string): Promise<TenantProjectAccessScopes> {
     this.assertDatabaseConfigured()
-    return { tenants: [], projects: [] }
+    const rows = await this.prisma.projectTenant.findMany({
+      where: {
+        status: "ACTIVE",
+        project: {
+          endpointBindings: {
+            some: {
+              status: "ACTIVE",
+              endpoint: {
+                status: "ACTIVE",
+                team: {
+                  status: "ACTIVE",
+                  memberships: {
+                    some: {
+                      userId,
+                      status: "ACTIVE",
+                      team: { status: "ACTIVE" },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      select: {
+        projectId: true,
+        tenantId: true,
+        project: {
+          select: {
+            status: true,
+          },
+        },
+        tenant: {
+          select: {
+            status: true,
+          },
+        },
+      },
+      orderBy: [{ tenantId: "asc" }, { projectId: "asc" }],
+    })
+
+    return mapTenantProjectScopeRows(rows)
   }
 
   async recordAudit(entry: AdminAuditEntry): Promise<void> {
@@ -444,6 +548,33 @@ async function isBootstrapCompleteInTransaction(
 function assertActiveUser(principal: AdminPrincipal): void {
   if (principal.status !== "ACTIVE") {
     throw new DisabledUserError()
+  }
+}
+
+function mapTenantProjectScopeRows(rows: TenantProjectScopeRow[]): TenantProjectAccessScopes {
+  const tenants = new Map<string, TenantProjectAccessScopes["tenants"][number]>()
+  const projects = new Map<string, TenantProjectAccessScopes["projects"][number]>()
+
+  for (const row of rows) {
+    if (!tenants.has(row.tenantId)) {
+      tenants.set(row.tenantId, {
+        tenantId: row.tenantId,
+        status: row.tenant.status,
+      })
+    }
+
+    if (row.project.status === "ACTIVE" && row.tenant.status === "ACTIVE") {
+      projects.set(`${row.projectId}:${row.tenantId}`, {
+        projectId: row.projectId,
+        tenantId: row.tenantId,
+        status: row.project.status,
+      })
+    }
+  }
+
+  return {
+    tenants: [...tenants.values()],
+    projects: [...projects.values()],
   }
 }
 

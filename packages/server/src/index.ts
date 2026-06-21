@@ -7,10 +7,14 @@ import { createAuthRoutes } from "./routes/auth"
 import { createAdminRoutes } from "./routes/admin"
 import { hostRoutes } from "./routes/host"
 import { serverRoutes } from "./routes/server"
-import { instanceRoutes } from "./routes/instances"
-import { imageRoutes } from "./routes/images"
-import { operationRoutes } from "./routes/operations"
+import { createInstanceRoutes } from "./routes/instances"
+import { createImageRoutes } from "./routes/images"
+import { createOperationRoutes } from "./routes/operations"
 import { settingsRoutes } from "./routes/settings"
+import {
+  PrismaResourceVisibilityStore,
+  type ResourceVisibilityStore,
+} from "./services/resourceVisibility"
 import { AuthConfigError, AuthSessionError } from "./services/auth"
 import {
   assertAdminAuthConfigured,
@@ -24,12 +28,15 @@ import { readSessionCookie } from "./services/sessionCookie"
 export interface AppOptions {
   env?: NodeJS.ProcessEnv
   adminStore?: AdminDataStore
+  resourceVisibilityStore?: ResourceVisibilityStore
 }
 
 export function createApp(options: AppOptions = {}) {
   const app = new Hono()
   const env = options.env ?? process.env
   const adminStore = options.adminStore ?? new PrismaAdminDataStore()
+  const resourceVisibilityStore =
+    options.resourceVisibilityStore ?? new PrismaResourceVisibilityStore(undefined, env)
   const productApiAuth = requireDatabaseBackedAuth({ env, store: adminStore })
 
   app.use("*", cors({ origin: "http://localhost:5173", credentials: true }))
@@ -49,9 +56,30 @@ export function createApp(options: AppOptions = {}) {
 
   app.route("/api", hostRoutes)
   app.route("/api", serverRoutes)
-  app.route("/api", instanceRoutes)
-  app.route("/api", imageRoutes)
-  app.route("/api", operationRoutes)
+  app.route(
+    "/api",
+    createInstanceRoutes({
+      env,
+      sessionStore: adminStore,
+      resourceVisibilityStore,
+    })
+  )
+  app.route(
+    "/api",
+    createImageRoutes({
+      env,
+      sessionStore: adminStore,
+      resourceVisibilityStore,
+    })
+  )
+  app.route(
+    "/api",
+    createOperationRoutes({
+      env,
+      sessionStore: adminStore,
+      resourceVisibilityStore,
+    })
+  )
   app.route("/api", settingsRoutes)
 
   return app
