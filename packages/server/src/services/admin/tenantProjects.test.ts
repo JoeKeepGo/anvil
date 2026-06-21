@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import { describe, test } from "node:test"
+import { PrismaClient } from "@prisma/client"
 import {
   ArchivedProjectError,
   ArchivedEndpointForBindingError,
@@ -404,6 +405,49 @@ describe("tenant/project foundation service", () => {
       TenantProjectPermissionDeniedError
     )
   })
+
+  test(
+    "creates tenant defaults through the real PostgreSQL Prisma store",
+    { skip: process.env.ANVIL_TENANT_PROJECT_DATABASE_URL ? false : "set ANVIL_TENANT_PROJECT_DATABASE_URL to run the PostgreSQL regression test" },
+    async () => {
+      const originalDatabaseUrl = process.env.DATABASE_URL
+      process.env.DATABASE_URL = process.env.ANVIL_TENANT_PROJECT_DATABASE_URL
+      try {
+        const prisma = new PrismaClient()
+        await prisma.user.upsert({
+          where: { id: admin.id },
+          update: {},
+          create: {
+            id: admin.id,
+            email: admin.email,
+            name: admin.name,
+            passwordHash: "not-used-in-this-test",
+            status: "ACTIVE",
+            globalRole: "ADMIN",
+          },
+        })
+        await prisma.$disconnect()
+
+        const store = new PrismaAdminTenantProjectStore(undefined, {
+          DATABASE_URL: process.env.ANVIL_TENANT_PROJECT_DATABASE_URL,
+        })
+
+        const result = await createTenantWithDefaultProject(store, admin, {
+          name: "Postgres Tenant",
+          slug: `postgres-tenant-${Date.now()}`,
+        })
+
+        assert.equal(result.tenant.defaultProjectId, result.defaultProject.id)
+        assert.equal(result.defaultProject.ownerTenantId, result.tenant.id)
+      } finally {
+        if (originalDatabaseUrl === undefined) {
+          delete process.env.DATABASE_URL
+        } else {
+          process.env.DATABASE_URL = originalDatabaseUrl
+        }
+      }
+    }
+  )
 })
 
 class TestTenantProjectStore implements AdminTenantProjectStore {
