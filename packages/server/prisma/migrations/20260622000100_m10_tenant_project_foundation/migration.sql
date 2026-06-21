@@ -99,7 +99,9 @@ CREATE TABLE "ResourceOwnership" (
 
 CREATE UNIQUE INDEX "Tenant_slug_key" ON "Tenant"("slug");
 CREATE UNIQUE INDEX "Tenant_defaultProjectId_key" ON "Tenant"("defaultProjectId");
+CREATE UNIQUE INDEX "Tenant_defaultProjectId_id_key" ON "Tenant"("defaultProjectId", "id");
 CREATE UNIQUE INDEX "Project_ownerTenantId_slug_key" ON "Project"("ownerTenantId", "slug");
+CREATE UNIQUE INDEX "Project_id_ownerTenantId_key" ON "Project"("id", "ownerTenantId");
 CREATE INDEX "Project_ownerTenantId_idx" ON "Project"("ownerTenantId");
 CREATE UNIQUE INDEX "ProjectTenant_projectId_tenantId_key" ON "ProjectTenant"("projectId", "tenantId");
 CREATE INDEX "ProjectTenant_tenantId_idx" ON "ProjectTenant"("tenantId");
@@ -128,8 +130,8 @@ ALTER TABLE "ProjectTenantQuota" ADD CONSTRAINT "ProjectTenantQuota_positive_val
     ("maxIpv6Addresses" IS NULL OR "maxIpv6Addresses" >= 1)
   );
 
-ALTER TABLE "Tenant" ADD CONSTRAINT "Tenant_defaultProjectId_fkey"
-  FOREIGN KEY ("defaultProjectId") REFERENCES "Project"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "Tenant" ADD CONSTRAINT "Tenant_defaultProjectId_id_fkey"
+  FOREIGN KEY ("defaultProjectId", "id") REFERENCES "Project"("id", "ownerTenantId") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 ALTER TABLE "Project" ADD CONSTRAINT "Project_ownerTenantId_fkey"
   FOREIGN KEY ("ownerTenantId") REFERENCES "Tenant"("id") ON DELETE RESTRICT ON UPDATE CASCADE;

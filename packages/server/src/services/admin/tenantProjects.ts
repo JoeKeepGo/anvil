@@ -96,6 +96,7 @@ export interface AdminTenantProjectStore {
     status: ManagedProjectTenantStatus
   }): Promise<ManagedProjectTenant>
   getProjectQuota(projectId: string): Promise<ProjectQuotaPolicy | null>
+  listProjectTenantQuotaAllocations(projectId: string): Promise<ProjectTenantQuotaAllocation[]>
   upsertProjectQuotaRecord(input: ProjectQuotaPolicy): Promise<ProjectQuotaPolicy>
   upsertProjectTenantQuotaRecord(
     input: ProjectTenantQuotaAllocation
@@ -365,7 +366,13 @@ export async function setProjectQuotaPolicy(
   await getActiveProject(store, projectId)
   assertQuotaPolicy(quota)
 
-  const saved = await store.upsertProjectQuotaRecord({ projectId, ...quota })
+  const nextQuota = { projectId, ...quota }
+  const allocations = await store.listProjectTenantQuotaAllocations(projectId)
+  for (const allocation of allocations) {
+    assertAllocationWithinProjectQuota(allocation, nextQuota)
+  }
+
+  const saved = await store.upsertProjectQuotaRecord(nextQuota)
   await recordAdminAudit(store, {
     actorUserId: actor.id,
     action: "project.quota.update",
@@ -612,6 +619,14 @@ export class PrismaAdminTenantProjectStore implements AdminTenantProjectStore {
     this.assertDatabaseConfigured()
     const quota = await this.prisma.projectQuota.findUnique({ where: { projectId } })
     return quota ? mapProjectQuota(quota) : null
+  }
+
+  async listProjectTenantQuotaAllocations(projectId: string): Promise<ProjectTenantQuotaAllocation[]> {
+    this.assertDatabaseConfigured()
+    const quotas = await this.prisma.projectTenantQuota.findMany({
+      where: { projectId },
+    })
+    return quotas.map(mapProjectTenantQuota)
   }
 
   async upsertProjectQuotaRecord(input: ProjectQuotaPolicy): Promise<ProjectQuotaPolicy> {

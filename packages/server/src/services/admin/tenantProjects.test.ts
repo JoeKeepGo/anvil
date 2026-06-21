@@ -234,6 +234,16 @@ describe("tenant/project foundation service", () => {
       maxInstances: 2,
       maxIpv6Addresses: null,
     })
+    await assert.rejects(
+      setProjectQuotaPolicy(store, admin, tenant.defaultProject.id, {
+        maxVcpu: 3,
+        maxMemoryBytes: null,
+        maxDiskBytes: null,
+        maxInstances: 2,
+        maxIpv6Addresses: null,
+      }),
+      ProjectQuotaExceededError
+    )
     assert.equal(store.agentWriteCalls, 0)
   })
 
@@ -521,6 +531,10 @@ class TestTenantProjectStore implements AdminTenantProjectStore {
 
   async getProjectQuota(projectId: string): Promise<ProjectQuotaPolicy | null> {
     return this.projectQuotas.find((quota) => quota.projectId === projectId) ?? null
+  }
+
+  async listProjectTenantQuotaAllocations(projectId: string): Promise<ProjectTenantQuotaAllocation[]> {
+    return this.tenantQuotas.filter((quota) => quota.projectId === projectId)
   }
 
   async upsertProjectQuotaRecord(input: ProjectQuotaPolicy): Promise<ProjectQuotaPolicy> {

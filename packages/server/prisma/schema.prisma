@@ -88,13 +88,15 @@ model Tenant {
   slug               String               @unique
   status             TenantStatus         @default(ACTIVE)
   defaultProjectId   String?              @unique
-  defaultProject     Project?             @relation("TenantDefaultProject", fields: [defaultProjectId], references: [id], onDelete: Restrict)
+  defaultProject     Project?             @relation("TenantDefaultProject", fields: [defaultProjectId, id], references: [id, ownerTenantId], onDelete: Restrict)
   ownedProjects      Project[]            @relation("ProjectOwnerTenant")
   projectMemberships ProjectTenant[]
   quotaAllocations   ProjectTenantQuota[]
   resourceOwnerships ResourceOwnership[]
   createdAt          DateTime             @default(now())
   updatedAt          DateTime             @updatedAt
+
+  @@unique([defaultProjectId, id])
 }
 
 model Project {
@@ -114,6 +116,7 @@ model Project {
   updatedAt          DateTime                 @updatedAt
 
   @@unique([ownerTenantId, slug])
+  @@unique([id, ownerTenantId])
   @@index([ownerTenantId])
 }
 
