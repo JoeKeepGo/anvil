@@ -8,13 +8,13 @@ import type {
 } from "../../services/admin/session"
 
 describe("admin router scaffold", () => {
-  test("mounts Phase 3 users and teams prefixes as authenticated admin routes", async () => {
+  test("mounts Phase 3 users, teams, tenants, and projects prefixes as authenticated admin routes", async () => {
     const routes = createAdminRoutes({
       store: new TestAdminStore(),
       env: { ANVIL_SESSION_SECRET: "test-session-secret-with-enough-entropy" },
     })
 
-    for (const path of ["/users", "/teams"]) {
+    for (const path of ["/users", "/teams", "/tenants", "/projects"]) {
       const response = await routes.request(path)
 
       assert.equal(response.status, 401, `${path} should be mounted as a protected Phase 3 route`)

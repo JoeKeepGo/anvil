@@ -3,7 +3,9 @@ import { createAuditRoutes } from "./audit"
 import { createBootstrapRoutes } from "./bootstrap"
 import { createEndpointRoutes } from "./endpoints"
 import { createPermissionRoutes } from "./permissions"
+import { createProjectRoutes } from "./projects"
 import { createTeamRoutes } from "./teams"
+import { createTenantRoutes } from "./tenants"
 import { createUserRoutes } from "./users"
 import type { AdminDataStore } from "../../services/admin/session"
 
@@ -19,7 +21,9 @@ export function createAdminRoutes(options: AdminRoutesOptions) {
   routes.route("/", createBootstrapRoutes(options))
   routes.route("/endpoints", createEndpointRoutes())
   routes.route("/permissions", createPermissionRoutes())
+  routes.route("/projects", createProjectRoutes())
   routes.route("/teams", createTeamRoutes())
+  routes.route("/tenants", createTenantRoutes())
   routes.route("/users", createUserRoutes())
 
   return routes
