@@ -21,6 +21,13 @@ export type GlobalAction =
   | "endpoints:read"
   | "endpoints:write"
   | "audit:read"
+  | "tenants:read"
+  | "tenants:write"
+  | "projects:read"
+  | "projects:write"
+  | "quotas:read"
+  | "quotas:write"
+  | "resources:read"
 
 export type TeamAction =
   | "members:read"
@@ -28,6 +35,21 @@ export type TeamAction =
   | "endpoints:read"
   | "endpoints:write"
   | "audit:read"
+
+export type TenantAction = "tenants:read" | "projects:read" | "resources:read"
+export type ProjectAction = "projects:read" | "quotas:read" | "resources:read"
+
+export interface TenantProjectAccessScopes {
+  tenants: Array<{
+    tenantId: string
+    status: "ACTIVE" | "ARCHIVED"
+  }>
+  projects: Array<{
+    projectId: string
+    tenantId: string
+    status: "ACTIVE" | "ARCHIVED"
+  }>
+}
 
 export interface AdminPrincipalTeam {
   id: string
@@ -49,6 +71,15 @@ export interface BrowserAccessSummary {
   bootstrapComplete: boolean
   canAdmin: boolean
   globalActions: GlobalAction[]
+  tenants: Array<{
+    tenantId: string
+    actions: TenantAction[]
+  }>
+  projects: Array<{
+    projectId: string
+    tenantId: string
+    actions: ProjectAction[]
+  }>
   teams: Array<{
     teamId: string
     actions: TeamAction[]
@@ -76,6 +107,7 @@ export interface AdminDataStore {
   createBootstrapAdmin(record: CreateBootstrapAdminRecord): Promise<AdminPrincipal>
   findUserByEmail(email: string): Promise<(AdminPrincipal & { passwordHash: string }) | null>
   findUserById(userId: string): Promise<AdminPrincipal | null>
+  getTenantProjectAccessScopes?(userId: string): Promise<TenantProjectAccessScopes>
   recordAudit(entry: AdminAuditEntry): Promise<void>
 }
 
@@ -165,7 +197,7 @@ export async function authenticateAdminUser(
 
   return {
     user,
-    access: buildAccessSummary(user, true),
+    access: buildAccessSummary(user, true, await getTenantProjectAccessScopes(store, user.id)),
     sessionToken: signAdminSession(env, user),
   }
 }
@@ -194,7 +226,11 @@ export async function resolveCurrentAdminUser(
 
   return {
     user: safeUser,
-    access: buildAccessSummary(safeUser, await store.isBootstrapComplete()),
+    access: buildAccessSummary(
+      safeUser,
+      await store.isBootstrapComplete(),
+      await getTenantProjectAccessScopes(store, safeUser.id)
+    ),
   }
 }
 
@@ -349,6 +385,11 @@ export class PrismaAdminDataStore implements AdminDataStore {
     return user ? mapPrismaUserToAdminPrincipal(user) : null
   }
 
+  async getTenantProjectAccessScopes(_userId: string): Promise<TenantProjectAccessScopes> {
+    this.assertDatabaseConfigured()
+    return { tenants: [], projects: [] }
+  }
+
   async recordAudit(entry: AdminAuditEntry): Promise<void> {
     this.assertDatabaseConfigured()
     await this.prisma.auditLog.create({
@@ -369,6 +410,13 @@ export class PrismaAdminDataStore implements AdminDataStore {
       throw new AuthConfigError()
     }
   }
+}
+
+async function getTenantProjectAccessScopes(
+  store: AdminDataStore,
+  userId: string
+): Promise<TenantProjectAccessScopes> {
+  return store.getTenantProjectAccessScopes?.(userId) ?? { tenants: [], projects: [] }
 }
 
 const userInclude = {

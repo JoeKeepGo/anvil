@@ -48,15 +48,17 @@ model TeamMembership {
 }
 
 model AgentEndpoint {
-  id             String         @id @default(uuid())
-  name           String
-  url            String
-  tokenCiphertext String?
-  status         EndpointStatus @default(ACTIVE)
-  teamId         String
-  team           Team           @relation(fields: [teamId], references: [id])
-  createdAt      DateTime       @default(now())
-  updatedAt      DateTime       @updatedAt
+  id                 String                   @id @default(uuid())
+  name               String
+  url                String
+  tokenCiphertext    String?
+  status             EndpointStatus           @default(ACTIVE)
+  teamId             String
+  team               Team                     @relation(fields: [teamId], references: [id])
+  projectBindings    EndpointProjectBinding[]
+  resourceOwnerships ResourceOwnership[]
+  createdAt          DateTime                 @default(now())
+  updatedAt          DateTime                 @updatedAt
 
   @@unique([teamId, name])
 }
@@ -78,6 +80,128 @@ model AuditLog {
   @@index([actorId])
   @@index([targetType, targetId])
   @@index([teamId])
+}
+
+model Tenant {
+  id                 String               @id @default(uuid())
+  name               String
+  slug               String               @unique
+  status             TenantStatus         @default(ACTIVE)
+  defaultProjectId   String?              @unique
+  defaultProject     Project?             @relation("TenantDefaultProject", fields: [defaultProjectId, id], references: [id, ownerTenantId], onDelete: Restrict)
+  ownedProjects      Project[]            @relation("ProjectOwnerTenant")
+  projectMemberships ProjectTenant[]
+  quotaAllocations   ProjectTenantQuota[]
+  resourceOwnerships ResourceOwnership[]
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+
+  @@unique([defaultProjectId, id])
+}
+
+model Project {
+  id                 String                   @id @default(uuid())
+  name               String
+  slug               String
+  status             ProjectStatus            @default(ACTIVE)
+  ownerTenantId      String
+  ownerTenant        Tenant                   @relation("ProjectOwnerTenant", fields: [ownerTenantId], references: [id])
+  defaultForTenant   Tenant?                  @relation("TenantDefaultProject")
+  tenantMemberships  ProjectTenant[]
+  quota              ProjectQuota?
+  tenantQuotas       ProjectTenantQuota[]
+  endpointBindings   EndpointProjectBinding[]
+  resourceOwnerships ResourceOwnership[]
+  createdAt          DateTime                 @default(now())
+  updatedAt          DateTime                 @updatedAt
+
+  @@unique([ownerTenantId, slug])
+  @@unique([id, ownerTenantId])
+  @@index([ownerTenantId])
+}
+
+model ProjectTenant {
+  id                 String               @id @default(uuid())
+  projectId          String
+  project            Project              @relation(fields: [projectId], references: [id])
+  tenantId           String
+  tenant             Tenant               @relation(fields: [tenantId], references: [id])
+  role               ProjectTenantRole
+  status             ProjectTenantStatus  @default(ACTIVE)
+  quotaAllocation    ProjectTenantQuota?
+  resourceOwnerships ResourceOwnership[]
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+
+  @@unique([projectId, tenantId])
+  @@index([tenantId])
+}
+
+model ProjectQuota {
+  projectId        String   @id
+  project          Project  @relation(fields: [projectId], references: [id])
+  maxVcpu          Int?
+  maxMemoryBytes   BigInt?
+  maxDiskBytes     BigInt?
+  maxInstances     Int?
+  maxIpv6Addresses Int?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
+
+model ProjectTenantQuota {
+  projectId        String
+  projectTenant    ProjectTenant @relation(fields: [projectId, tenantId], references: [projectId, tenantId])
+  project          Project  @relation(fields: [projectId], references: [id])
+  tenantId         String
+  tenant           Tenant   @relation(fields: [tenantId], references: [id])
+  maxVcpu          Int?
+  maxMemoryBytes   BigInt?
+  maxDiskBytes     BigInt?
+  maxInstances     Int?
+  maxIpv6Addresses Int?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@id([projectId, tenantId])
+  @@index([tenantId])
+}
+
+model EndpointProjectBinding {
+  id                 String                       @id @default(uuid())
+  endpointId         String
+  endpoint           AgentEndpoint                @relation(fields: [endpointId], references: [id])
+  projectId          String
+  project            Project                      @relation(fields: [projectId], references: [id])
+  status             EndpointProjectBindingStatus @default(ACTIVE)
+  resourceOwnerships ResourceOwnership[]
+  createdAt          DateTime                     @default(now())
+  updatedAt          DateTime                     @updatedAt
+
+  @@unique([endpointId, projectId])
+  @@index([projectId])
+}
+
+model ResourceOwnership {
+  id                     String                 @id @default(uuid())
+  resourceType           ResourceType
+  resourceId             String
+  endpointId             String
+  endpointProjectBinding EndpointProjectBinding @relation(fields: [endpointId, projectId], references: [endpointId, projectId])
+  projectTenant         ProjectTenant          @relation(fields: [projectId, tenantId], references: [projectId, tenantId])
+  endpoint              AgentEndpoint          @relation(fields: [endpointId], references: [id])
+  projectId             String
+  project               Project                @relation(fields: [projectId], references: [id])
+  tenantId              String
+  tenant                Tenant                 @relation(fields: [tenantId], references: [id])
+  discoveredName        String?
+  externalFingerprint   String?
+  createdAt             DateTime               @default(now())
+  updatedAt             DateTime               @updatedAt
+
+  @@unique([resourceType, endpointId, resourceId])
+  @@index([projectId])
+  @@index([tenantId])
 }
 
 enum GlobalRole {
@@ -109,4 +233,35 @@ enum MembershipStatus {
 enum EndpointStatus {
   ACTIVE
   ARCHIVED
+}
+
+enum TenantStatus {
+  ACTIVE
+  ARCHIVED
+}
+
+enum ProjectStatus {
+  ACTIVE
+  ARCHIVED
+}
+
+enum ProjectTenantRole {
+  OWNER
+  PARTICIPANT
+}
+
+enum ProjectTenantStatus {
+  ACTIVE
+  REMOVED
+}
+
+enum EndpointProjectBindingStatus {
+  ACTIVE
+  REMOVED
+}
+
+enum ResourceType {
+  INSTANCE
+  IMAGE
+  OPERATION
 }
