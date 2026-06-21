@@ -3,6 +3,9 @@ import type { AdminDataStore, AuthResult, BrowserAccessSummary } from "./session
 import { toBrowserSafePrincipal } from "./session"
 import { buildAccessSummary } from "./permissions"
 import { recordAdminAudit } from "./audit"
+import { BootstrapAlreadyCompletedError } from "./bootstrapErrors"
+
+export { BootstrapAlreadyCompletedError } from "./bootstrapErrors"
 
 export interface BootstrapStatus {
   bootstrapComplete: boolean
@@ -14,13 +17,6 @@ export interface BootstrapCreateInput {
   name: string
   password: string
   teamName: string
-}
-
-export class BootstrapAlreadyCompletedError extends Error {
-  constructor(message = "Bootstrap has already been completed.") {
-    super(message)
-    this.name = "BootstrapAlreadyCompletedError"
-  }
 }
 
 export async function getBootstrapStatus(store: AdminDataStore): Promise<BootstrapStatus> {
