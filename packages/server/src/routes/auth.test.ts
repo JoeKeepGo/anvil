@@ -2,6 +2,12 @@ import assert from "node:assert/strict"
 import { describe, test } from "node:test"
 import bcrypt from "bcryptjs"
 import { createAuthRoutes } from "./auth"
+import type {
+  AdminAuditEntry,
+  AdminDataStore,
+  AdminPrincipal,
+  CreateBootstrapAdminRecord,
+} from "../services/admin/session"
 
 const adminPassword = "correct horse battery staple"
 const sessionSecret = "test-session-secret-with-enough-entropy"
@@ -39,12 +45,16 @@ function assertExpiredSessionCookie(response: Response): string {
 }
 
 describe("auth routes", () => {
-  test("app mounts POST /api/auth/login", async () => {
+  test("app mounts database-backed auth and admin bootstrap routes", async () => {
     const originalNodeEnv = process.env.NODE_ENV
-    const originalSessionSecret = process.env.ANVIL_SESSION_SECRET
+    const originalEnv = {
+      ANVIL_SESSION_SECRET: process.env.ANVIL_SESSION_SECRET,
+      DATABASE_URL: process.env.DATABASE_URL,
+    }
 
     process.env.NODE_ENV = "test"
     delete process.env.ANVIL_SESSION_SECRET
+    delete process.env.DATABASE_URL
 
     try {
       const { app } = await import("../index")
@@ -62,6 +72,16 @@ describe("auth routes", () => {
           details: {},
         },
       })
+
+      const bootstrapStatus = await app.request("/api/admin/bootstrap/status")
+      assert.equal(bootstrapStatus.status, 500)
+      assert.deepEqual(await readJson(bootstrapStatus), {
+        error: {
+          code: "AUTH_CONFIG_ERROR",
+          message: "Authentication is not configured.",
+          details: {},
+        },
+      })
     } finally {
       if (originalNodeEnv === undefined) {
         delete process.env.NODE_ENV
@@ -69,10 +89,12 @@ describe("auth routes", () => {
         process.env.NODE_ENV = originalNodeEnv
       }
 
-      if (originalSessionSecret === undefined) {
-        delete process.env.ANVIL_SESSION_SECRET
-      } else {
-        process.env.ANVIL_SESSION_SECRET = originalSessionSecret
+      for (const [key, value] of Object.entries(originalEnv)) {
+        if (value === undefined) {
+          delete process.env[key]
+        } else {
+          process.env[key] = value
+        }
       }
     }
   })
@@ -124,6 +146,126 @@ describe("auth routes", () => {
     assert.equal(JSON.stringify(body).includes(adminPassword), false)
     assert.equal(JSON.stringify(body).includes(sessionSecret), false)
     assert.equal(JSON.stringify(body).includes("anvil_session"), false)
+  })
+
+  test("POST /login uses database users and returns browser-safe capabilities when a store is provided", async () => {
+    const store = new TestAdminStore()
+    const admin = await store.addUser({
+      id: "user-1",
+      email: "admin@example.com",
+      name: "Admin User",
+      password: adminPassword,
+      status: "ACTIVE",
+      globalRole: "ADMIN",
+      teams: [
+        {
+          id: "team-1",
+          name: "Primary Team",
+          role: "OWNER",
+          status: "ACTIVE",
+        },
+      ],
+    })
+    const routes = createAuthRoutes({ env: { ANVIL_SESSION_SECRET: sessionSecret }, store })
+
+    const response = await routes.request("/login", {
+      method: "POST",
+      body: JSON.stringify({ email: "Admin@Example.com", password: adminPassword }),
+      headers: { "content-type": "application/json" },
+    })
+    const body = await readJson(response)
+    const setCookie = response.headers.get("set-cookie") ?? ""
+
+    assert.equal(response.status, 200)
+    assert.deepEqual(body, {
+      user: {
+        id: "user-1",
+        email: "admin@example.com",
+        name: "Admin User",
+        status: "ACTIVE",
+        globalRole: "ADMIN",
+        teams: [
+          {
+            id: "team-1",
+            name: "Primary Team",
+            role: "OWNER",
+            status: "ACTIVE",
+          },
+        ],
+      },
+      access: {
+        bootstrapComplete: true,
+        canAdmin: true,
+        globalActions: ["users:read", "users:write", "teams:read", "teams:write", "audit:read"],
+        teams: [
+          {
+            teamId: "team-1",
+            actions: ["members:read", "members:write", "endpoints:read", "endpoints:write", "audit:read"],
+          },
+        ],
+      },
+    })
+    assert.match(setCookie, /^anvil_session=/)
+    assert.match(setCookie, /HttpOnly/i)
+    assert.match(setCookie, /SameSite=Lax/i)
+    assert.match(setCookie, /Path=\//i)
+    assert.match(setCookie, /Max-Age=28800/i)
+
+    const serialized = JSON.stringify(body)
+    assert.equal(serialized.includes(adminPassword), false)
+    assert.equal(serialized.includes(admin.passwordHash), false)
+    assert.equal(serialized.includes(sessionSecret), false)
+    assert.equal(serialized.includes("passwordHash"), false)
+    assert.equal(serialized.includes("token"), false)
+    assert.equal(serialized.includes("private"), false)
+  })
+
+  test("POST /login blocks database login before bootstrap and disabled users safely", async () => {
+    const incompleteStore = new TestAdminStore({ bootstrapComplete: false })
+    const incompleteRoutes = createAuthRoutes({
+      env: { ANVIL_SESSION_SECRET: sessionSecret },
+      store: incompleteStore,
+    })
+    const incomplete = await incompleteRoutes.request("/login", {
+      method: "POST",
+      body: JSON.stringify({ email: "admin@example.com", password: adminPassword }),
+      headers: { "content-type": "application/json" },
+    })
+
+    assert.equal(incomplete.status, 403)
+    assert.deepEqual(await readJson(incomplete), {
+      error: {
+        code: "BOOTSTRAP_REQUIRED",
+        message: "Bootstrap must be completed before login.",
+        details: {},
+      },
+    })
+
+    const store = new TestAdminStore()
+    await store.addUser({
+      id: "user-1",
+      email: "disabled@example.com",
+      name: "Disabled User",
+      password: adminPassword,
+      status: "DISABLED",
+      globalRole: "ADMIN",
+      teams: [],
+    })
+    const routes = createAuthRoutes({ env: { ANVIL_SESSION_SECRET: sessionSecret }, store })
+    const disabled = await routes.request("/login", {
+      method: "POST",
+      body: JSON.stringify({ email: "disabled@example.com", password: adminPassword }),
+      headers: { "content-type": "application/json" },
+    })
+
+    assert.equal(disabled.status, 403)
+    assert.deepEqual(await readJson(disabled), {
+      error: {
+        code: "USER_DISABLED",
+        message: "User is disabled.",
+        details: {},
+      },
+    })
   })
 
   test("POST /login maps auth config and credential failures to safe errors", async () => {
@@ -179,6 +321,80 @@ describe("auth routes", () => {
         email: "admin@example.com",
         name: "Admin",
         role: "ADMIN",
+      },
+    })
+  })
+
+  test("GET /me reloads database user state and returns safe capabilities when a store is provided", async () => {
+    const store = new TestAdminStore()
+    await store.addUser({
+      id: "user-1",
+      email: "member@example.com",
+      name: "Member User",
+      password: adminPassword,
+      status: "ACTIVE",
+      globalRole: "MEMBER",
+      teams: [
+        {
+          id: "team-1",
+          name: "Primary Team",
+          role: "VIEWER",
+          status: "ACTIVE",
+        },
+      ],
+    })
+    const routes = createAuthRoutes({ env: { ANVIL_SESSION_SECRET: sessionSecret }, store })
+    const login = await routes.request("/login", {
+      method: "POST",
+      body: JSON.stringify({ email: "member@example.com", password: adminPassword }),
+      headers: { "content-type": "application/json" },
+    })
+
+    const response = await routes.request("/me", {
+      headers: { cookie: sessionCookie(login) },
+    })
+
+    assert.equal(response.status, 200)
+    assert.deepEqual(await readJson(response), {
+      user: {
+        id: "user-1",
+        email: "member@example.com",
+        name: "Member User",
+        status: "ACTIVE",
+        globalRole: "MEMBER",
+        teams: [
+          {
+            id: "team-1",
+            name: "Primary Team",
+            role: "VIEWER",
+            status: "ACTIVE",
+          },
+        ],
+      },
+      access: {
+        bootstrapComplete: true,
+        canAdmin: true,
+        globalActions: [],
+        teams: [
+          {
+            teamId: "team-1",
+            actions: ["members:read", "endpoints:read", "audit:read"],
+          },
+        ],
+      },
+    })
+
+    store.disableUser("user-1")
+    const disabled = await routes.request("/me", {
+      headers: { cookie: sessionCookie(login) },
+    })
+
+    assert.equal(disabled.status, 403)
+    assert.deepEqual(await readJson(disabled), {
+      error: {
+        code: "USER_DISABLED",
+        message: "User is disabled.",
+        details: {},
       },
     })
   })
@@ -422,4 +638,147 @@ describe("auth routes", () => {
       }
     }
   })
+
+  test("app reloads database users before product API handlers and rejects disabled or stale sessions", async () => {
+    const store = new TestAdminStore()
+    await store.addUser({
+      id: "user-1",
+      email: "admin@example.com",
+      name: "Admin User",
+      password: adminPassword,
+      status: "ACTIVE",
+      globalRole: "ADMIN",
+      teams: [],
+    })
+    const { createApp } = await import("../index")
+    const app = createApp({
+      env: { ANVIL_SESSION_SECRET: sessionSecret },
+      adminStore: store,
+    })
+
+    const login = await app.request("/api/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ email: "admin@example.com", password: adminPassword }),
+      headers: { "content-type": "application/json" },
+    })
+    const cookie = sessionCookie(login)
+    const allowed = await app.request("/api/server", { headers: { cookie } })
+
+    assert.equal(login.status, 200)
+    assert.equal(allowed.status, 200)
+    assert.deepEqual(await readJson(allowed), {
+      version: "0.1.0",
+      api_version: "1.0",
+      environment: {
+        server_name: "Anvil",
+        kernel: "",
+        os_name: "",
+      },
+    })
+
+    store.disableUser("user-1")
+    const disabled = await app.request("/api/server", { headers: { cookie } })
+
+    assert.equal(disabled.status, 403)
+    assert.deepEqual(await readJson(disabled), {
+      error: {
+        code: "USER_DISABLED",
+        message: "User is disabled.",
+        details: {},
+      },
+    })
+
+    store.enableUser("user-1")
+    store.renameUser("user-1", "Renamed Admin")
+    const stale = await app.request("/api/server", { headers: { cookie } })
+
+    assert.equal(stale.status, 401)
+    assert.deepEqual(await readJson(stale), {
+      error: {
+        code: "UNAUTHENTICATED",
+        message: "Authentication is required.",
+        details: {},
+      },
+    })
+  })
 })
+
+type TestUserInput = AdminPrincipal & { password: string }
+
+class TestAdminStore implements AdminDataStore {
+  private bootstrapComplete: boolean
+  private users = new Map<string, AdminPrincipal & { passwordHash: string }>()
+
+  constructor(options: { bootstrapComplete?: boolean } = {}) {
+    this.bootstrapComplete = options.bootstrapComplete ?? true
+  }
+
+  async isBootstrapComplete(): Promise<boolean> {
+    return this.bootstrapComplete
+  }
+
+  async createBootstrapAdmin(record: CreateBootstrapAdminRecord): Promise<AdminPrincipal> {
+    const user = await this.addUser({
+      id: "user-1",
+      email: record.email,
+      name: record.name,
+      password: "unused",
+      status: "ACTIVE",
+      globalRole: "ADMIN",
+      teams: [
+        {
+          id: "team-1",
+          name: record.teamName,
+          role: "OWNER",
+          status: "ACTIVE",
+        },
+      ],
+    })
+    this.users.set(user.id, { ...user, passwordHash: record.passwordHash })
+    this.bootstrapComplete = true
+    return user
+  }
+
+  async findUserByEmail(email: string): Promise<(AdminPrincipal & { passwordHash: string }) | null> {
+    const normalizedEmail = email.trim().toLowerCase()
+    return [...this.users.values()].find((user) => user.email === normalizedEmail) ?? null
+  }
+
+  async findUserById(userId: string): Promise<AdminPrincipal | null> {
+    return this.users.get(userId) ?? null
+  }
+
+  async recordAudit(_entry: AdminAuditEntry): Promise<void> {}
+
+  async addUser(input: TestUserInput): Promise<AdminPrincipal & { passwordHash: string }> {
+    const user: AdminPrincipal & { passwordHash: string } = {
+      id: input.id,
+      email: input.email.trim().toLowerCase(),
+      name: input.name,
+      status: input.status,
+      globalRole: input.globalRole,
+      teams: input.teams,
+      passwordHash: await bcrypt.hash(input.password, 10),
+    }
+    this.users.set(user.id, user)
+    return user
+  }
+
+  disableUser(userId: string): void {
+    const user = this.users.get(userId)
+    assert.ok(user)
+    this.users.set(userId, { ...user, status: "DISABLED" })
+  }
+
+  enableUser(userId: string): void {
+    const user = this.users.get(userId)
+    assert.ok(user)
+    this.users.set(userId, { ...user, status: "ACTIVE" })
+  }
+
+  renameUser(userId: string, name: string): void {
+    const user = this.users.get(userId)
+    assert.ok(user)
+    this.users.set(userId, { ...user, name })
+  }
+}

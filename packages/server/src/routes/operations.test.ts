@@ -2,28 +2,23 @@ import assert from "node:assert/strict"
 import { describe, test } from "node:test"
 import bcrypt from "bcryptjs"
 import { AgentTimeoutError, type AgentRequest, type AgentResponse } from "../services/agent"
-import { createAuthRoutes } from "./auth"
+import type {
+  AdminAuditEntry,
+  AdminDataStore,
+  AdminPrincipal,
+  CreateBootstrapAdminRecord,
+} from "../services/admin/session"
 import { createOperationRoutes } from "./operations"
 
 const adminPassword = "correct horse battery staple"
+const sessionSecret = "test-session-secret-with-enough-entropy"
 
 async function readJson(response: Response) {
   return (await response.json()) as unknown
 }
 
-async function authEnv(overrides: NodeJS.ProcessEnv = {}): Promise<NodeJS.ProcessEnv> {
-  return {
-    ANVIL_BOOTSTRAP_ADMIN_EMAIL: "admin@example.com",
-    ANVIL_BOOTSTRAP_ADMIN_NAME: "Admin",
-    ANVIL_BOOTSTRAP_ADMIN_PASSWORD_HASH: await bcrypt.hash(adminPassword, 10),
-    ANVIL_SESSION_SECRET: "test-session-secret-with-enough-entropy",
-    ...overrides,
-  }
-}
-
-async function validSessionCookie(env: NodeJS.ProcessEnv): Promise<string> {
-  const authRoutes = createAuthRoutes({ env })
-  const login = await authRoutes.request("/login", {
+async function validSessionCookie(app: { request: HonoRequest }): Promise<string> {
+  const login = await app.request("/api/auth/login", {
     method: "POST",
     body: JSON.stringify({ email: "admin@example.com", password: adminPassword }),
     headers: { "content-type": "application/json" },
@@ -38,21 +33,22 @@ describe("operation routes", () => {
     const originalNodeEnv = process.env.NODE_ENV
     const originalEnv = {
       ANVIL_AGENT_URL: process.env.ANVIL_AGENT_URL,
-      ANVIL_BOOTSTRAP_ADMIN_EMAIL: process.env.ANVIL_BOOTSTRAP_ADMIN_EMAIL,
-      ANVIL_BOOTSTRAP_ADMIN_NAME: process.env.ANVIL_BOOTSTRAP_ADMIN_NAME,
-      ANVIL_BOOTSTRAP_ADMIN_PASSWORD_HASH: process.env.ANVIL_BOOTSTRAP_ADMIN_PASSWORD_HASH,
       ANVIL_SESSION_SECRET: process.env.ANVIL_SESSION_SECRET,
     }
 
     process.env.NODE_ENV = "test"
-    Object.assign(process.env, await authEnv())
+    process.env.ANVIL_SESSION_SECRET = sessionSecret
     delete process.env.ANVIL_AGENT_URL
 
     try {
-      const { app } = await import("../index")
+      const { createApp } = await import("../index")
+      const app = createApp({
+        env: process.env,
+        adminStore: await TestAdminStore.withAdminUser(),
+      })
       const unauthenticated = await app.request("/api/operations")
       const authenticated = await app.request("/api/operations", {
-        headers: { cookie: await validSessionCookie(process.env) },
+        headers: { cookie: await validSessionCookie(app) },
       })
 
       assert.equal(unauthenticated.status, 401)
@@ -218,6 +214,46 @@ describe("operation routes", () => {
     }
   })
 })
+
+type HonoRequest = (path: string, init?: RequestInit) => Response | Promise<Response>
+
+class TestAdminStore implements AdminDataStore {
+  private readonly user: AdminPrincipal & { passwordHash: string }
+
+  private constructor(user: AdminPrincipal & { passwordHash: string }) {
+    this.user = user
+  }
+
+  static async withAdminUser(): Promise<TestAdminStore> {
+    return new TestAdminStore({
+      id: "user-1",
+      email: "admin@example.com",
+      name: "Admin User",
+      status: "ACTIVE",
+      globalRole: "ADMIN",
+      teams: [],
+      passwordHash: await bcrypt.hash(adminPassword, 10),
+    })
+  }
+
+  async isBootstrapComplete(): Promise<boolean> {
+    return true
+  }
+
+  async createBootstrapAdmin(_record: CreateBootstrapAdminRecord): Promise<AdminPrincipal> {
+    throw new Error("not used")
+  }
+
+  async findUserByEmail(email: string): Promise<(AdminPrincipal & { passwordHash: string }) | null> {
+    return email.trim().toLowerCase() === this.user.email ? this.user : null
+  }
+
+  async findUserById(userId: string): Promise<AdminPrincipal | null> {
+    return userId === this.user.id ? this.user : null
+  }
+
+  async recordAudit(_entry: AdminAuditEntry): Promise<void> {}
+}
 
 function operationResponse(metadata: unknown): AgentResponse {
   return {
