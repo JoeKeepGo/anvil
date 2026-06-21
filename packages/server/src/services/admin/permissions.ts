@@ -2,7 +2,9 @@ import type {
   AdminPrincipal,
   BrowserAccessSummary,
   GlobalAction,
+  GlobalRole,
   TeamAction,
+  TeamRole,
 } from "./session"
 
 export type { AdminPrincipal } from "./session"
@@ -12,6 +14,8 @@ export const globalAdminActions: GlobalAction[] = [
   "users:write",
   "teams:read",
   "teams:write",
+  "endpoints:read",
+  "endpoints:write",
   "audit:read",
 ]
 
@@ -25,6 +29,17 @@ export const teamOwnerActions: TeamAction[] = [
 
 const teamMaintainerActions: TeamAction[] = ["members:read", "endpoints:read", "endpoints:write", "audit:read"]
 const teamViewerActions: TeamAction[] = ["members:read", "endpoints:read", "audit:read"]
+
+export interface PermissionMatrix {
+  global: Array<{
+    role: GlobalRole
+    actions: GlobalAction[]
+  }>
+  team: Array<{
+    role: TeamRole
+    actions: TeamAction[]
+  }>
+}
 
 export function buildAccessSummary(
   principal: AdminPrincipal,
@@ -65,6 +80,35 @@ export function canPerformTeamAction(
       .teams.find((team) => team.teamId === teamId)
       ?.actions.includes(action) ?? false
   )
+}
+
+export function getPermissionMatrix(): PermissionMatrix {
+  return {
+    global: [
+      {
+        role: "ADMIN",
+        actions: globalAdminActions,
+      },
+      {
+        role: "MEMBER",
+        actions: [],
+      },
+    ],
+    team: [
+      {
+        role: "OWNER",
+        actions: teamOwnerActions,
+      },
+      {
+        role: "MAINTAINER",
+        actions: teamMaintainerActions,
+      },
+      {
+        role: "VIEWER",
+        actions: teamViewerActions,
+      },
+    ],
+  }
 }
 
 function emptyAccessSummary(bootstrapComplete: boolean): BrowserAccessSummary {

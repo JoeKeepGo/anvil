@@ -4,6 +4,7 @@ import {
   buildAccessSummary,
   canPerformGlobalAction,
   canPerformTeamAction,
+  getPermissionMatrix,
   globalAdminActions,
   teamOwnerActions,
   type AdminPrincipal,
@@ -93,5 +94,37 @@ describe("admin permission evaluator", () => {
       teams: [],
     })
     assert.equal(canPerformTeamAction(archivedTeam, "team-2", "members:read"), false)
+  })
+
+  test("exposes a browser-safe permission matrix from the evaluator action sets", () => {
+    assert.deepEqual(getPermissionMatrix(), {
+      global: [
+        {
+          role: "ADMIN",
+          actions: globalAdminActions,
+        },
+        {
+          role: "MEMBER",
+          actions: [],
+        },
+      ],
+      team: [
+        {
+          role: "OWNER",
+          actions: teamOwnerActions,
+        },
+        {
+          role: "MAINTAINER",
+          actions: ["members:read", "endpoints:read", "endpoints:write", "audit:read"],
+        },
+        {
+          role: "VIEWER",
+          actions: ["members:read", "endpoints:read", "audit:read"],
+        },
+      ],
+    })
+    assert.equal(JSON.stringify(getPermissionMatrix()).includes("password"), false)
+    assert.equal(JSON.stringify(getPermissionMatrix()).includes("token"), false)
+    assert.equal(JSON.stringify(getPermissionMatrix()).includes("session"), false)
   })
 })
