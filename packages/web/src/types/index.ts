@@ -92,6 +92,11 @@ export type UserStatus = "ACTIVE" | "DISABLED"
 export type TeamStatus = "ACTIVE" | "ARCHIVED"
 export type MembershipStatus = "ACTIVE" | "REMOVED"
 export type EndpointStatus = "ACTIVE" | "ARCHIVED"
+export type TenantStatus = "ACTIVE" | "ARCHIVED"
+export type ProjectStatus = "ACTIVE" | "ARCHIVED"
+export type ProjectTenantRole = "OWNER" | "PARTICIPANT"
+export type ProjectTenantStatus = "ACTIVE" | "REMOVED"
+export type EndpointProjectBindingStatus = "ACTIVE" | "REMOVED"
 
 export interface AuthUser {
   id: string
@@ -117,6 +122,13 @@ export type GlobalAction =
   | "endpoints:read"
   | "endpoints:write"
   | "audit:read"
+  | "tenants:read"
+  | "tenants:write"
+  | "projects:read"
+  | "projects:write"
+  | "quotas:read"
+  | "quotas:write"
+  | "resources:read"
 
 export type TeamAction =
   | "members:read"
@@ -125,10 +137,22 @@ export type TeamAction =
   | "endpoints:write"
   | "audit:read"
 
+export type TenantAction = "tenants:read" | "projects:read" | "resources:read"
+export type ProjectAction = "projects:read" | "quotas:read" | "resources:read"
+
 export interface AdminAccessSummary {
   bootstrapComplete: boolean
   canAdmin: boolean
   globalActions: GlobalAction[]
+  tenants: Array<{
+    tenantId: string
+    actions: TenantAction[]
+  }>
+  projects: Array<{
+    projectId: string
+    tenantId: string
+    actions: ProjectAction[]
+  }>
   teams: Array<{
     teamId: string
     actions: TeamAction[]
@@ -220,6 +244,93 @@ export interface ManagedEndpoint {
   credentialConfigured: boolean
 }
 
+export interface ManagedTenant {
+  id: string
+  name: string
+  slug: string
+  status: TenantStatus
+  defaultProjectId: string
+}
+
+export interface ManagedProject {
+  id: string
+  name: string
+  slug: string
+  status: ProjectStatus
+  ownerTenantId: string
+}
+
+export interface ManagedProjectTenant {
+  id: string
+  projectId: string
+  tenantId: string
+  role: ProjectTenantRole
+  status: ProjectTenantStatus
+}
+
+export interface ProjectQuotaPolicy {
+  projectId: string
+  maxVcpu: number | null
+  maxMemoryBytes: number | null
+  maxDiskBytes: number | null
+  maxInstances: number | null
+  maxIpv6Addresses: number | null
+}
+
+export interface ProjectTenantQuotaAllocation {
+  projectId: string
+  tenantId: string
+  maxVcpu: number | null
+  maxMemoryBytes: number | null
+  maxDiskBytes: number | null
+  maxInstances: number | null
+  maxIpv6Addresses: number | null
+}
+
+export type QuotaInput = Omit<ProjectQuotaPolicy, "projectId">
+export type TenantQuotaInput = Omit<ProjectTenantQuotaAllocation, "projectId" | "tenantId">
+
+export interface ManagedEndpointProjectBinding {
+  id: string
+  endpointId: string
+  projectId: string
+  status: EndpointProjectBindingStatus
+}
+
+export interface AdminProjectDetail {
+  project: ManagedProject
+  participants: ManagedProjectTenant[]
+  quota: ProjectQuotaPolicy | null
+  tenantQuotas: ProjectTenantQuotaAllocation[]
+  endpointBindings: ManagedEndpointProjectBinding[]
+}
+
+export interface CreateAdminTenantInput {
+  name: string
+  slug: string
+}
+
+export interface UpdateAdminTenantInput {
+  name?: string
+  slug?: string
+}
+
+export interface CreateAdminTenantResponse {
+  tenant: ManagedTenant
+  defaultProject: ManagedProject
+}
+
+export interface CreateAdminProjectInput {
+  ownerTenantId: string
+  name: string
+  slug: string
+}
+
+export interface UpdateAdminProjectInput {
+  name?: string
+  slug?: string
+}
+
 export interface CreateAdminEndpointInput {
   name: string
   url: string
@@ -244,6 +355,14 @@ export interface PermissionMatrix {
   team: Array<{
     role: TeamRole
     actions: TeamAction[]
+  }>
+  tenant: Array<{
+    scope: "ACTIVE_TENANT"
+    actions: TenantAction[]
+  }>
+  project: Array<{
+    scope: "ACTIVE_PROJECT"
+    actions: ProjectAction[]
   }>
 }
 

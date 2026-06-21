@@ -7,14 +7,17 @@ import {
   KeyRound,
   LayoutDashboard,
   LogOut,
+  Network,
+  PanelsTopLeft,
   Settings,
   ShieldCheck,
   Users,
   UsersRound,
 } from "lucide-react"
+import type { LucideIcon } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { canUseAdminConsole } from "@/lib/adminAccess"
-import type { AuthSession } from "@/types"
+import { canUseAdminConsole, hasAnyGlobalAction } from "@/lib/adminAccess"
+import type { AdminAccessSummary, AuthSession } from "@/types"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 
@@ -26,11 +29,32 @@ const navItems = [
   { to: "/settings", icon: Settings, label: "Settings" },
 ]
 
-const adminNavItems = [
+type AdminNavItem = {
+  to: string
+  icon: LucideIcon
+  label: string
+  enabled?: (access: AdminAccessSummary) => boolean
+}
+
+const adminNavItems: AdminNavItem[] = [
   { to: "/admin", icon: ShieldCheck, label: "Admin" },
   { to: "/admin/users", icon: Users, label: "Users" },
   { to: "/admin/teams", icon: UsersRound, label: "Teams" },
   { to: "/admin/endpoints", icon: KeyRound, label: "Endpoints" },
+  {
+    to: "/admin/tenants",
+    icon: Network,
+    label: "Tenants",
+    enabled: (access: AdminAccessSummary) =>
+      hasAnyGlobalAction(access, ["tenants:read", "tenants:write"]),
+  },
+  {
+    to: "/admin/projects",
+    icon: PanelsTopLeft,
+    label: "Projects",
+    enabled: (access: AdminAccessSummary) =>
+      hasAnyGlobalAction(access, ["projects:read", "projects:write"]),
+  },
   { to: "/admin/permissions", icon: ClipboardList, label: "Permissions" },
   { to: "/admin/audit", icon: Activity, label: "Audit" },
 ]
@@ -43,6 +67,7 @@ type SidebarProps = {
 
 export function Sidebar({ session, onSignOut, signingOut = false }: SidebarProps) {
   const showAdmin = session ? canUseAdminConsole(session.access) : false
+  const adminAccess = session?.access
 
   return (
     <aside className="border-b border-sidebar-border bg-sidebar lg:fixed lg:left-0 lg:top-0 lg:z-40 lg:h-screen lg:w-56 lg:border-b-0 lg:border-r">
@@ -71,24 +96,26 @@ export function Sidebar({ session, onSignOut, signingOut = false }: SidebarProps
         ))}
         {showAdmin ? (
           <div className="contents lg:mt-2 lg:flex lg:flex-col lg:gap-1 lg:border-t lg:border-sidebar-border lg:pt-2">
-            {adminNavItems.map((item) => (
-              <NavLink
-                key={item.to}
-                to={item.to}
-                end={item.to === "/admin"}
-                className={({ isActive }) =>
-                  cn(
-                    "flex shrink-0 items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
-                    isActive
-                      ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                      : "text-sidebar-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground"
-                  )
-                }
-              >
-                <item.icon className="h-4 w-4" />
-                {item.label}
-              </NavLink>
-            ))}
+            {adminNavItems
+              .filter((item) => !item.enabled || (adminAccess ? item.enabled(adminAccess) : false))
+              .map((item) => (
+                <NavLink
+                  key={item.to}
+                  to={item.to}
+                  end={item.to === "/admin"}
+                  className={({ isActive }) =>
+                    cn(
+                      "flex shrink-0 items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+                      isActive
+                        ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                        : "text-sidebar-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground"
+                    )
+                  }
+                >
+                  <item.icon className="h-4 w-4" />
+                  {item.label}
+                </NavLink>
+              ))}
           </div>
         ) : null}
       </nav>
