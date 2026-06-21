@@ -1,4 +1,8 @@
-import type { AdminAuditEntry, AdminDataStore } from "./session"
+import type { AdminAuditEntry } from "./session"
+
+export interface AdminAuditStore {
+  recordAudit(entry: AdminAuditEntry): Promise<void>
+}
 
 const redactedValue = "[REDACTED]"
 const sensitiveMetadataKeys = new Set([
@@ -13,7 +17,7 @@ const sensitiveMetadataKeys = new Set([
 ])
 
 export async function recordAdminAudit(
-  store: AdminDataStore,
+  store: AdminAuditStore,
   entry: AdminAuditEntry
 ): Promise<void> {
   await store.recordAudit({
