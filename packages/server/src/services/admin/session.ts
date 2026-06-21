@@ -3,6 +3,10 @@ import jwt, { type JwtPayload } from "jsonwebtoken"
 import { PrismaClient, type Prisma } from "@prisma/client"
 import { AuthConfigError, AuthSessionError } from "../auth"
 import { buildAccessSummary } from "./permissions"
+import { BootstrapAlreadyCompletedError } from "./bootstrapErrors"
+
+const bootstrapAdvisoryLockNamespace = 0x416e7669
+const bootstrapAdvisoryLockKey = 0x6d394230
 
 export type UserStatus = "ACTIVE" | "DISABLED"
 export type TeamStatus = "ACTIVE" | "ARCHIVED"
@@ -272,20 +276,22 @@ export class PrismaAdminDataStore implements AdminDataStore {
 
   async isBootstrapComplete(): Promise<boolean> {
     this.assertDatabaseConfigured()
-    const admin = await this.prisma.user.findFirst({
-      where: {
-        globalRole: "ADMIN",
-        status: "ACTIVE",
-      },
-      select: { id: true },
-    })
-
-    return admin !== null
+    return isBootstrapCompleteInTransaction(this.prisma)
   }
 
   async createBootstrapAdmin(record: CreateBootstrapAdminRecord): Promise<AdminPrincipal> {
     this.assertDatabaseConfigured()
     const user = await this.prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`
+        SELECT pg_advisory_xact_lock(
+          ${bootstrapAdvisoryLockNamespace}::int,
+          ${bootstrapAdvisoryLockKey}::int
+        )
+      `
+      if (await isBootstrapCompleteInTransaction(tx)) {
+        throw new BootstrapAlreadyCompletedError()
+      }
+
       const team = await tx.team.create({
         data: {
           name: record.teamName,
@@ -372,6 +378,20 @@ const userInclude = {
     },
   },
 } as const
+
+async function isBootstrapCompleteInTransaction(
+  client: Pick<PrismaClient, "user">
+): Promise<boolean> {
+  const admin = await client.user.findFirst({
+    where: {
+      globalRole: "ADMIN",
+      status: "ACTIVE",
+    },
+    select: { id: true },
+  })
+
+  return admin !== null
+}
 
 function assertActiveUser(principal: AdminPrincipal): void {
   if (principal.status !== "ACTIVE") {
