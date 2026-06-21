@@ -1,5 +1,10 @@
 import { Hono } from "hono"
+import { createAuditRoutes } from "./audit"
 import { createBootstrapRoutes } from "./bootstrap"
+import { createEndpointRoutes } from "./endpoints"
+import { createPermissionRoutes } from "./permissions"
+import { createTeamRoutes } from "./teams"
+import { createUserRoutes } from "./users"
 import type { AdminDataStore } from "../../services/admin/session"
 
 export interface AdminRoutesOptions {
@@ -10,7 +15,12 @@ export interface AdminRoutesOptions {
 export function createAdminRoutes(options: AdminRoutesOptions) {
   const routes = new Hono()
 
+  routes.route("/audit", createAuditRoutes())
   routes.route("/", createBootstrapRoutes(options))
+  routes.route("/endpoints", createEndpointRoutes())
+  routes.route("/permissions", createPermissionRoutes())
+  routes.route("/teams", createTeamRoutes())
+  routes.route("/users", createUserRoutes())
 
   return routes
 }
