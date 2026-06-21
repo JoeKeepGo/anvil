@@ -8,13 +8,33 @@ import type {
 } from "../../services/admin/session"
 
 describe("admin router scaffold", () => {
-  test("mounts planned admin route prefixes with explicit not-implemented responses", async () => {
+  test("mounts Phase 3 users and teams prefixes as authenticated admin routes", async () => {
     const routes = createAdminRoutes({
       store: new TestAdminStore(),
       env: { ANVIL_SESSION_SECRET: "test-session-secret-with-enough-entropy" },
     })
 
-    for (const path of ["/users", "/teams", "/endpoints", "/permissions/matrix", "/audit"]) {
+    for (const path of ["/users", "/teams"]) {
+      const response = await routes.request(path)
+
+      assert.equal(response.status, 401, `${path} should be mounted as a protected Phase 3 route`)
+      assert.deepEqual(await response.json(), {
+        error: {
+          code: "UNAUTHENTICATED",
+          message: "Authentication is required.",
+          details: {},
+        },
+      })
+    }
+  })
+
+  test("keeps Phase 4 prefixes mounted with explicit not-implemented responses", async () => {
+    const routes = createAdminRoutes({
+      store: new TestAdminStore(),
+      env: { ANVIL_SESSION_SECRET: "test-session-secret-with-enough-entropy" },
+    })
+
+    for (const path of ["/endpoints", "/permissions/matrix", "/audit"]) {
       const response = await routes.request(path)
 
       assert.equal(response.status, 501, `${path} should be mounted as an explicit scaffold route`)
