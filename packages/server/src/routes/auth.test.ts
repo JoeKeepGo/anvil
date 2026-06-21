@@ -196,7 +196,7 @@ describe("auth routes", () => {
       access: {
         bootstrapComplete: true,
         canAdmin: true,
-        globalActions: ["users:read", "users:write", "teams:read", "teams:write", "audit:read"],
+        globalActions: ["users:read", "users:write", "teams:read", "teams:write", "endpoints:read", "endpoints:write", "audit:read"],
         teams: [
           {
             teamId: "team-1",

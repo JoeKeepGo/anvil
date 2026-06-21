@@ -28,7 +28,7 @@ describe("admin router scaffold", () => {
     }
   })
 
-  test("keeps Phase 4 prefixes mounted with explicit not-implemented responses", async () => {
+  test("mounts Phase 4 prefixes as authenticated admin routes", async () => {
     const routes = createAdminRoutes({
       store: new TestAdminStore(),
       env: { ANVIL_SESSION_SECRET: "test-session-secret-with-enough-entropy" },
@@ -37,11 +37,11 @@ describe("admin router scaffold", () => {
     for (const path of ["/endpoints", "/permissions/matrix", "/audit"]) {
       const response = await routes.request(path)
 
-      assert.equal(response.status, 501, `${path} should be mounted as an explicit scaffold route`)
+      assert.equal(response.status, 401, `${path} should be mounted as a protected Phase 4 route`)
       assert.deepEqual(await response.json(), {
         error: {
-          code: "ADMIN_ROUTE_NOT_IMPLEMENTED",
-          message: "This admin route is not implemented yet.",
+          code: "UNAUTHENTICATED",
+          message: "Authentication is required.",
           details: {},
         },
       })

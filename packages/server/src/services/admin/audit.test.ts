@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { describe, test } from "node:test"
-import { recordAdminAudit } from "./audit"
+import { listAdminAuditEntries, recordAdminAudit, type AdminAuditQueryStore } from "./audit"
 import type { AdminAuditEntry, AdminDataStore, AdminPrincipal, CreateBootstrapAdminRecord } from "./session"
 
 describe("admin audit writer", () => {
@@ -54,6 +54,128 @@ describe("admin audit writer", () => {
     assert.equal(serialized.includes("secret-that-must-not-appear"), false)
     assert.equal(serialized.includes("Bearer secret"), false)
   })
+
+  test("lists audit entries with filters, pagination, permission checks, and redaction", async () => {
+    const store = new TestAuditQueryStore()
+
+    store.addAuditEntry({
+      id: "audit-1",
+      actor: { id: "admin-1", email: "admin@example.com", name: "Admin User" },
+      action: "endpoint.create",
+      targetType: "endpoint",
+      targetId: "endpoint-1",
+      teamId: "team-1",
+      metadata: {
+        name: "Primary Agent",
+        token: "endpoint-token-that-must-not-leak",
+        nested: {
+          sessionSecret: "session-secret-that-must-not-leak",
+        },
+      },
+      createdAt: "2026-06-21T00:00:00.000Z",
+    })
+    store.addAuditEntry({
+      id: "audit-2",
+      actor: { id: "owner-1", email: "owner@example.com", name: "Owner User" },
+      action: "team.member.add",
+      targetType: "membership",
+      targetId: "member-1",
+      teamId: "team-2",
+      metadata: { role: "VIEWER" },
+      createdAt: "2026-06-21T00:01:00.000Z",
+    })
+
+    const result = await listAdminAuditEntries(
+      store,
+      {
+        id: "admin-1",
+        email: "admin@example.com",
+        name: "Admin User",
+        status: "ACTIVE",
+        globalRole: "ADMIN",
+        teams: [],
+      },
+      {
+        targetType: "endpoint",
+        limit: 1,
+      }
+    )
+
+    assert.deepEqual(result, {
+      audit: [
+        {
+          id: "audit-1",
+          actor: { id: "admin-1", email: "admin@example.com", name: "Admin User" },
+          action: "endpoint.create",
+          targetType: "endpoint",
+          targetId: "endpoint-1",
+          teamId: "team-1",
+          metadata: {
+            name: "Primary Agent",
+            token: "[REDACTED]",
+            nested: {
+              sessionSecret: "[REDACTED]",
+            },
+          },
+          createdAt: "2026-06-21T00:00:00.000Z",
+        },
+      ],
+      page: {
+        limit: 1,
+        offset: 0,
+        total: 1,
+      },
+    })
+
+    const teamScoped = await listAdminAuditEntries(
+      store,
+      {
+        id: "owner-1",
+        email: "owner@example.com",
+        name: "Owner User",
+        status: "ACTIVE",
+        globalRole: "MEMBER",
+        teams: [
+          {
+            id: "team-2",
+            name: "Other Team",
+            status: "ACTIVE",
+            role: "OWNER",
+          },
+        ],
+      },
+      {}
+    )
+
+    assert.deepEqual(teamScoped.audit.map((entry) => entry.id), ["audit-2"])
+    assert.deepEqual(store.lastQuery?.teamIds, ["team-2"])
+
+    const mismatchedTeamFilter = await listAdminAuditEntries(
+      store,
+      {
+        id: "owner-1",
+        email: "owner@example.com",
+        name: "Owner User",
+        status: "ACTIVE",
+        globalRole: "MEMBER",
+        teams: [
+          {
+            id: "team-2",
+            name: "Other Team",
+            status: "ACTIVE",
+            role: "OWNER",
+          },
+        ],
+      },
+      { teamId: "team-1" }
+    )
+
+    assert.deepEqual(mismatchedTeamFilter.audit, [])
+
+    const serialized = JSON.stringify(result)
+    assert.equal(serialized.includes("endpoint-token-that-must-not-leak"), false)
+    assert.equal(serialized.includes("session-secret-that-must-not-leak"), false)
+  })
 })
 
 class TestAdminStore implements AdminDataStore {
@@ -77,5 +199,72 @@ class TestAdminStore implements AdminDataStore {
 
   async recordAudit(entry: AdminAuditEntry): Promise<void> {
     this.auditEntries.push(entry)
+  }
+}
+
+class TestAuditQueryStore implements AdminAuditQueryStore {
+  private readonly entries: Array<{
+    id: string
+    actor: {
+      id: string
+      email: string
+      name: string
+    }
+    action: string
+    targetType: string
+    targetId: string
+    teamId?: string
+    metadata?: Record<string, unknown>
+    createdAt: string
+  }> = []
+  lastQuery: Parameters<AdminAuditQueryStore["listAuditEntries"]>[0] | undefined
+
+  async listAuditEntries(query: Parameters<AdminAuditQueryStore["listAuditEntries"]>[0]) {
+    this.lastQuery = query
+    const filtered = this.entries.filter((entry) => {
+      if (query.actorUserId && entry.actor.id !== query.actorUserId) {
+        return false
+      }
+      if (query.targetType && entry.targetType !== query.targetType) {
+        return false
+      }
+      if (query.targetId && entry.targetId !== query.targetId) {
+        return false
+      }
+      if (query.action && entry.action !== query.action) {
+        return false
+      }
+      if (query.teamId && entry.teamId !== query.teamId) {
+        return false
+      }
+      if (query.teamIds && query.teamIds.length === 0) {
+        return false
+      }
+      if (query.teamIds && !query.teamIds.includes(entry.teamId ?? "")) {
+        return false
+      }
+      return true
+    })
+    return {
+      entries: filtered.slice(query.offset, query.offset + query.limit),
+      total: filtered.length,
+    }
+  }
+
+  addAuditEntry(entry: {
+    id: string
+    actor: {
+      id: string
+      email: string
+      name: string
+    }
+    action: string
+    targetType: string
+    targetId: string
+    teamId?: string
+    metadata?: Record<string, unknown>
+    createdAt: string
+  }): void {
+    this.entries.push(entry)
   }
 }

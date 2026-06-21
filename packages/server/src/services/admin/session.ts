@@ -9,7 +9,14 @@ export type TeamStatus = "ACTIVE" | "ARCHIVED"
 export type GlobalRole = "ADMIN" | "MEMBER"
 export type TeamRole = "OWNER" | "MAINTAINER" | "VIEWER"
 
-export type GlobalAction = "users:read" | "users:write" | "teams:read" | "teams:write" | "audit:read"
+export type GlobalAction =
+  | "users:read"
+  | "users:write"
+  | "teams:read"
+  | "teams:write"
+  | "endpoints:read"
+  | "endpoints:write"
+  | "audit:read"
 
 export type TeamAction =
   | "members:read"
