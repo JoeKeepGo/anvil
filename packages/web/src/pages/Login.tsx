@@ -2,8 +2,8 @@ import { useEffect, useState } from "react"
 import type { FormEvent } from "react"
 import { Navigate, useLocation, useNavigate } from "react-router-dom"
 import { LockKeyhole, ShieldCheck } from "lucide-react"
-import { ApiRequestError, fetchMe, login } from "@/lib/api"
-import type { AuthUser } from "@/types"
+import { ApiRequestError, fetchBootstrapStatus, fetchMe, login } from "@/lib/api"
+import type { AuthSession, BootstrapStatus } from "@/types"
 import { Button } from "@/components/ui/button"
 import {
   Card,
@@ -46,7 +46,8 @@ export function Login() {
   const location = useLocation()
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
-  const [currentUser, setCurrentUser] = useState<AuthUser | null>(null)
+  const [currentSession, setCurrentSession] = useState<AuthSession | null>(null)
+  const [bootstrapStatus, setBootstrapStatus] = useState<BootstrapStatus | null>(null)
   const [checkingSession, setCheckingSession] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -57,14 +58,14 @@ export function Login() {
     let cancelled = false
 
     fetchMe()
-      .then((user) => {
+      .then((session) => {
         if (!cancelled) {
-          setCurrentUser(user)
+          setCurrentSession(session)
         }
       })
       .catch(() => {
         if (!cancelled) {
-          setCurrentUser(null)
+          setCurrentSession(null)
         }
       })
       .finally(() => {
@@ -78,7 +79,27 @@ export function Login() {
     }
   }, [])
 
-  if (currentUser) {
+  useEffect(() => {
+    let cancelled = false
+
+    fetchBootstrapStatus()
+      .then((status) => {
+        if (!cancelled) {
+          setBootstrapStatus(status)
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setBootstrapStatus(null)
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  if (currentSession) {
     return <Navigate to={returnPath} replace />
   }
 
@@ -173,6 +194,17 @@ export function Login() {
             </form>
           </CardContent>
         </Card>
+
+        {bootstrapStatus?.available ? (
+          <Button
+            className="w-full"
+            type="button"
+            variant="outline"
+            onClick={() => navigate("/admin/bootstrap")}
+          >
+            Open bootstrap setup
+          </Button>
+        ) : null}
       </div>
     </main>
   )

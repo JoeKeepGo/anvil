@@ -4,15 +4,20 @@ import { useNavigate } from "react-router-dom"
 import { Sidebar } from "./Sidebar"
 import { fetchMe, logout } from "@/lib/api"
 import { ApiRequestError } from "@/lib/api"
-import type { AuthUser } from "@/types"
+import type { AuthSession } from "@/types"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
 
+export interface AppShellContext {
+  session: AuthSession
+  refreshSession: () => void
+}
+
 export function Layout() {
   const location = useLocation()
   const navigate = useNavigate()
-  const [user, setUser] = useState<AuthUser | null>(null)
+  const [session, setSession] = useState<AuthSession | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<unknown>(null)
   const [signingOut, setSigningOut] = useState(false)
@@ -23,11 +28,11 @@ export function Layout() {
     setError(null)
 
     fetchMe()
-      .then((currentUser) => {
-        setUser(currentUser)
+      .then((currentSession) => {
+        setSession(currentSession)
       })
       .catch((err: unknown) => {
-        setUser(null)
+        setSession(null)
         setError(err)
       })
       .finally(() => {
@@ -41,7 +46,7 @@ export function Layout() {
 
     try {
       await logout()
-      setUser(null)
+      setSession(null)
       navigate("/login", { replace: true })
     } catch (err) {
       setSignOutError(err instanceof Error ? err.message : "Unable to sign out.")
@@ -57,14 +62,14 @@ export function Layout() {
     setError(null)
 
     fetchMe()
-      .then((currentUser) => {
+      .then((currentSession) => {
         if (!cancelled) {
-          setUser(currentUser)
+          setSession(currentSession)
         }
       })
       .catch((err: unknown) => {
         if (!cancelled) {
-          setUser(null)
+          setSession(null)
           setError(err)
         }
       })
@@ -82,9 +87,9 @@ export function Layout() {
   if (loading) {
     return (
       <div className="min-h-screen bg-background">
-        <Sidebar user={null} />
-        <main className="ml-56 min-h-screen p-6">
-          <div className="max-w-xl space-y-4">
+        <Sidebar session={null} />
+        <main className="min-h-screen p-4 lg:ml-56 lg:p-6">
+          <div className="flex max-w-xl flex-col gap-4">
             <Skeleton className="h-8 w-48" />
             <Skeleton className="h-24 w-full" />
           </div>
@@ -102,8 +107,8 @@ export function Layout() {
 
     return (
       <div className="min-h-screen bg-background">
-        <Sidebar user={null} />
-        <main className="ml-56 min-h-screen p-6">
+        <Sidebar session={null} />
+        <main className="min-h-screen p-4 lg:ml-56 lg:p-6">
           <Card className="max-w-xl">
             <CardHeader>
               <CardTitle>Authentication unavailable</CardTitle>
@@ -122,14 +127,14 @@ export function Layout() {
 
   return (
     <div className="min-h-screen bg-background">
-      <Sidebar user={user} onSignOut={signOut} signingOut={signingOut} />
-      <main className="ml-56 min-h-screen p-6">
+      <Sidebar session={session} onSignOut={signOut} signingOut={signingOut} />
+      <main className="min-h-screen p-4 lg:ml-56 lg:p-6">
         {signOutError ? (
           <div className="mb-4 max-w-xl rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
             {signOutError}
           </div>
         ) : null}
-        <Outlet />
+        {session ? <Outlet context={{ session, refreshSession: checkCurrentUser }} /> : null}
       </main>
     </div>
   )
