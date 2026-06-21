@@ -8,6 +8,14 @@ import {
   verifySession,
 } from "../services/auth"
 import {
+  authenticateAdminUser,
+  BootstrapRequiredError,
+  DisabledUserError,
+  InvalidAdminCredentialsError,
+  resolveCurrentAdminUser,
+  type AdminDataStore,
+} from "../services/admin/session"
+import {
   readSessionCookie,
   serializeExpiredSessionCookie,
   serializeSessionCookie,
@@ -20,6 +28,7 @@ const loginRequestSchema = z.object({
 
 export interface AuthRoutesOptions {
   env?: NodeJS.ProcessEnv
+  store?: AdminDataStore
 }
 
 export function createAuthRoutes(options: AuthRoutesOptions = {}) {
@@ -44,6 +53,17 @@ export function createAuthRoutes(options: AuthRoutesOptions = {}) {
     }
 
     try {
+      if (options.store) {
+        const result = await authenticateAdminUser(
+          options.store,
+          env,
+          parsed.data.email,
+          parsed.data.password
+        )
+        c.header("Set-Cookie", serializeSessionCookie(result.sessionToken))
+        return c.json({ user: result.user, access: result.access })
+      }
+
       const result = await authenticateBootstrapUser(env, parsed.data.email, parsed.data.password)
       c.header("Set-Cookie", serializeSessionCookie(result.sessionToken))
       return c.json({ user: result.user })
@@ -74,12 +94,60 @@ export function createAuthRoutes(options: AuthRoutesOptions = {}) {
         )
       }
 
+      if (error instanceof InvalidAdminCredentialsError) {
+        return c.json(
+          {
+            error: {
+              code: "INVALID_CREDENTIALS",
+              message: "Invalid email or password.",
+              details: {},
+            },
+          },
+          401
+        )
+      }
+
+      if (error instanceof BootstrapRequiredError) {
+        return c.json(
+          {
+            error: {
+              code: "BOOTSTRAP_REQUIRED",
+              message: "Bootstrap must be completed before login.",
+              details: {},
+            },
+          },
+          403
+        )
+      }
+
+      if (error instanceof DisabledUserError) {
+        return c.json(
+          {
+            error: {
+              code: "USER_DISABLED",
+              message: "User is disabled.",
+              details: {},
+            },
+          },
+          403
+        )
+      }
+
       throw error
     }
   })
 
   routes.get("/me", async (c) => {
     try {
+      if (options.store) {
+        const result = await resolveCurrentAdminUser(
+          options.store,
+          env,
+          readSessionCookie(c.req.header("cookie"))
+        )
+        return c.json({ user: result.user, access: result.access })
+      }
+
       const user = verifySession(env, readSessionCookie(c.req.header("cookie")))
       return c.json({ user })
     } catch (error) {
@@ -106,6 +174,19 @@ export function createAuthRoutes(options: AuthRoutesOptions = {}) {
             },
           },
           500
+        )
+      }
+
+      if (error instanceof DisabledUserError) {
+        return c.json(
+          {
+            error: {
+              code: "USER_DISABLED",
+              message: "User is disabled.",
+              details: {},
+            },
+          },
+          403
         )
       }
 

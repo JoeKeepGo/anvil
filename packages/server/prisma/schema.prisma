@@ -8,47 +8,105 @@ generator client {
 }
 
 model User {
-  id        String     @id @default(uuid())
-  email     String     @unique
-  password  String
-  name      String
-  role      Role       @default(MEMBER)
-  teamId    String
-  team      Team       @relation(fields: [teamId], references: [id])
-  auditLogs AuditLog[]
-  createdAt DateTime   @default(now())
-  updatedAt DateTime   @updatedAt
+  id              String           @id @default(uuid())
+  email           String           @unique
+  passwordHash    String
+  name            String
+  status          UserStatus       @default(ACTIVE)
+  globalRole      GlobalRole       @default(MEMBER)
+  memberships     TeamMembership[]
+  auditLogs       AuditLog[]       @relation("AuditActor")
+  targetAuditLogs AuditLog[]       @relation("AuditTargetUser")
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
 }
 
 model Team {
-  id        String          @id @default(uuid())
-  name      String
-  members   User[]
-  endpoints AgentEndpoint[]
-  createdAt DateTime        @default(now())
+  id          String           @id @default(uuid())
+  name        String           @unique
+  status      TeamStatus       @default(ACTIVE)
+  memberships TeamMembership[]
+  endpoints   AgentEndpoint[]
+  auditLogs   AuditLog[]
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+}
+
+model TeamMembership {
+  id        String           @id @default(uuid())
+  userId    String
+  user      User             @relation(fields: [userId], references: [id])
+  teamId    String
+  team      Team             @relation(fields: [teamId], references: [id])
+  role      TeamRole
+  status    MembershipStatus @default(ACTIVE)
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+
+  @@unique([userId, teamId])
+  @@index([teamId])
 }
 
 model AgentEndpoint {
-  id        String   @id @default(uuid())
-  name      String
-  url       String
-  token     String
-  teamId    String
-  team      Team     @relation(fields: [teamId], references: [id])
-  createdAt DateTime @default(now())
+  id             String         @id @default(uuid())
+  name           String
+  url            String
+  tokenCiphertext String?
+  status         EndpointStatus @default(ACTIVE)
+  teamId         String
+  team           Team           @relation(fields: [teamId], references: [id])
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  @@unique([teamId, name])
 }
 
 model AuditLog {
-  id        String   @id @default(uuid())
-  userId    String
-  user      User     @relation(fields: [userId], references: [id])
-  action    String
-  target    String
-  metadata  Json?
-  createdAt DateTime @default(now())
+  id         String   @id @default(uuid())
+  actorId    String
+  actor      User     @relation("AuditActor", fields: [actorId], references: [id])
+  targetType String
+  targetId   String
+  targetUserId String?
+  targetUser User?    @relation("AuditTargetUser", fields: [targetUserId], references: [id])
+  teamId     String?
+  team       Team?    @relation(fields: [teamId], references: [id])
+  action     String
+  metadata   Json?
+  createdAt  DateTime @default(now())
+
+  @@index([actorId])
+  @@index([targetType, targetId])
+  @@index([teamId])
 }
 
-enum Role {
+enum GlobalRole {
   ADMIN
   MEMBER
+}
+
+enum TeamRole {
+  OWNER
+  MAINTAINER
+  VIEWER
+}
+
+enum UserStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum TeamStatus {
+  ACTIVE
+  ARCHIVED
+}
+
+enum MembershipStatus {
+  ACTIVE
+  REMOVED
+}
+
+enum EndpointStatus {
+  ACTIVE
+  ARCHIVED
 }

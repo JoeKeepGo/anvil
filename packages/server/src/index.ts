@@ -1,39 +1,117 @@
 import { Hono } from "hono"
+import type { MiddlewareHandler } from "hono"
 import { serve } from "@hono/node-server"
 import { cors } from "hono/cors"
 import { logger } from "hono/logger"
-import { requireAuth } from "./middleware/authGate"
-import { authRoutes } from "./routes/auth"
+import { createAuthRoutes } from "./routes/auth"
+import { createAdminRoutes } from "./routes/admin"
 import { hostRoutes } from "./routes/host"
 import { serverRoutes } from "./routes/server"
 import { instanceRoutes } from "./routes/instances"
 import { imageRoutes } from "./routes/images"
 import { operationRoutes } from "./routes/operations"
 import { settingsRoutes } from "./routes/settings"
+import { AuthConfigError, AuthSessionError } from "./services/auth"
+import {
+  assertAdminAuthConfigured,
+  DisabledUserError,
+  PrismaAdminDataStore,
+  resolveCurrentAdminUser,
+  type AdminDataStore,
+} from "./services/admin/session"
+import { readSessionCookie } from "./services/sessionCookie"
 
-const app = new Hono()
+export interface AppOptions {
+  env?: NodeJS.ProcessEnv
+  adminStore?: AdminDataStore
+}
 
-app.use("*", cors({ origin: "http://localhost:5173", credentials: true }))
-app.use("*", logger())
+export function createApp(options: AppOptions = {}) {
+  const app = new Hono()
+  const env = options.env ?? process.env
+  const adminStore = options.adminStore ?? new PrismaAdminDataStore()
+  const productApiAuth = requireDatabaseBackedAuth({ env, store: adminStore })
 
-app.get("/api/health", (c) => c.json({ status: "ok" }))
-app.route("/api/auth", authRoutes)
+  app.use("*", cors({ origin: "http://localhost:5173", credentials: true }))
+  app.use("*", logger())
 
-app.use("/api/server", requireAuth())
-app.use("/api/host/*", requireAuth())
-app.use("/api/instances", requireAuth())
-app.use("/api/instances/*", requireAuth())
-app.use("/api/images", requireAuth())
-app.use("/api/operations", requireAuth())
-app.use("/api/settings/*", requireAuth())
+  app.get("/api/health", (c) => c.json({ status: "ok" }))
+  app.route("/api/auth", createAuthRoutes({ env, store: adminStore }))
+  app.route("/api/admin", createAdminRoutes({ env, store: adminStore }))
 
-app.route("/api", hostRoutes)
-app.route("/api", serverRoutes)
-app.route("/api", instanceRoutes)
-app.route("/api", imageRoutes)
-app.route("/api", operationRoutes)
-app.route("/api", settingsRoutes)
+  app.use("/api/server", productApiAuth)
+  app.use("/api/host/*", productApiAuth)
+  app.use("/api/instances", productApiAuth)
+  app.use("/api/instances/*", productApiAuth)
+  app.use("/api/images", productApiAuth)
+  app.use("/api/operations", productApiAuth)
+  app.use("/api/settings/*", productApiAuth)
 
+  app.route("/api", hostRoutes)
+  app.route("/api", serverRoutes)
+  app.route("/api", instanceRoutes)
+  app.route("/api", imageRoutes)
+  app.route("/api", operationRoutes)
+  app.route("/api", settingsRoutes)
+
+  return app
+}
+
+function requireDatabaseBackedAuth(options: {
+  env: NodeJS.ProcessEnv
+  store: AdminDataStore
+}): MiddlewareHandler {
+  return async (c, next) => {
+    try {
+      assertAdminAuthConfigured(options.env)
+      await resolveCurrentAdminUser(options.store, options.env, readSessionCookie(c.req.header("cookie")))
+      await next()
+    } catch (error) {
+      if (error instanceof AuthSessionError) {
+        return c.json(
+          {
+            error: {
+              code: "UNAUTHENTICATED",
+              message: "Authentication is required.",
+              details: {},
+            },
+          },
+          401
+        )
+      }
+
+      if (error instanceof AuthConfigError) {
+        return c.json(
+          {
+            error: {
+              code: "AUTH_CONFIG_ERROR",
+              message: "Authentication is not configured.",
+              details: {},
+            },
+          },
+          500
+        )
+      }
+
+      if (error instanceof DisabledUserError) {
+        return c.json(
+          {
+            error: {
+              code: "USER_DISABLED",
+              message: "User is disabled.",
+              details: {},
+            },
+          },
+          403
+        )
+      }
+
+      throw error
+    }
+  }
+}
+
+const app = createApp()
 const port = parseInt(process.env.PORT || "3000")
 
 if (process.env.NODE_ENV !== "test") {

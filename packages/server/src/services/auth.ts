@@ -1,5 +1,6 @@
 import bcrypt from "bcryptjs"
 import jwt, { type JwtPayload } from "jsonwebtoken"
+import { signAdminSession, type AdminPrincipal } from "./admin/session"
 
 export type AuthRole = "ADMIN" | "MEMBER"
 
@@ -98,6 +99,10 @@ export function verifySession(env: NodeJS.ProcessEnv, sessionToken: string | und
 
 export function assertAuthConfigured(env: NodeJS.ProcessEnv): void {
   parseAuthConfig(env)
+}
+
+export function signSessionForPrincipal(env: NodeJS.ProcessEnv, principal: AdminPrincipal): string {
+  return signAdminSession(env, principal)
 }
 
 function parseAuthConfig(env: NodeJS.ProcessEnv): AuthConfig {
