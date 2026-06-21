@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto"
 import { PrismaClient, type Prisma } from "@prisma/client"
 import { recordAdminAudit } from "./audit"
 import { canPerformGlobalAction } from "./permissions"
@@ -513,6 +514,7 @@ export class PrismaAdminTenantProjectStore implements AdminTenantProjectStore {
     const created = await this.prisma.$transaction(async (tx) => {
       const tenant = await tx.tenant.create({
         data: {
+          id: randomUUID(),
           name: input.tenantName,
           slug: input.tenantSlug,
           status: "ACTIVE",
