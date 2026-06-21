@@ -9,9 +9,21 @@ import type {
   OperationSummary,
   OperationsResponse,
   AuthResponse,
-  AuthUser,
+  AuthSession,
   LogoutResponse,
   ApiError,
+  AuditQuery,
+  AuditResponse,
+  BootstrapAdminInput,
+  BootstrapStatus,
+  CreateAdminEndpointInput,
+  CreateAdminUserInput,
+  ManagedEndpoint,
+  ManagedTeam,
+  ManagedUser,
+  PermissionMatrix,
+  UpdateAdminEndpointInput,
+  UpdateAdminUserInput,
 } from "../types"
 
 class ApiRequestError extends Error {
@@ -78,21 +90,182 @@ export function fetchOperations(): Promise<OperationSummary[]> {
 }
 
 // Auth
-export function login(email: string, password: string): Promise<AuthUser> {
+export function login(email: string, password: string): Promise<AuthSession> {
   return apiFetch<AuthResponse>("/api/auth/login", {
     method: "POST",
     body: JSON.stringify({ email, password }),
-  }).then((response) => response.user)
+  })
 }
 
-export function fetchMe(): Promise<AuthUser> {
-  return apiFetch<AuthResponse>("/api/auth/me").then((response) => response.user)
+export function fetchMe(): Promise<AuthSession> {
+  return apiFetch<AuthResponse>("/api/auth/me")
 }
 
 export function logout(): Promise<void> {
   return apiFetch<LogoutResponse>("/api/auth/logout", {
     method: "POST",
   }).then(() => undefined)
+}
+
+// Admin bootstrap
+export function fetchBootstrapStatus(): Promise<BootstrapStatus> {
+  return apiFetch<BootstrapStatus>("/api/admin/bootstrap/status")
+}
+
+export function bootstrapAdmin(input: BootstrapAdminInput): Promise<AuthSession> {
+  return apiFetch<AuthResponse>("/api/admin/bootstrap", {
+    method: "POST",
+    body: JSON.stringify(input),
+  })
+}
+
+// Admin users
+export function fetchAdminUsers(): Promise<ManagedUser[]> {
+  return apiFetch<{ users: ManagedUser[] }>("/api/admin/users").then((response) => response.users)
+}
+
+export function fetchAdminUser(userId: string): Promise<ManagedUser> {
+  return apiFetch<{ user: ManagedUser }>(`/api/admin/users/${encodeURIComponent(userId)}`).then(
+    (response) => response.user
+  )
+}
+
+export function createAdminUser(input: CreateAdminUserInput): Promise<ManagedUser> {
+  return apiFetch<{ user: ManagedUser }>("/api/admin/users", {
+    method: "POST",
+    body: JSON.stringify(input),
+  }).then((response) => response.user)
+}
+
+export function updateAdminUser(userId: string, input: UpdateAdminUserInput): Promise<ManagedUser> {
+  return apiFetch<{ user: ManagedUser }>(`/api/admin/users/${encodeURIComponent(userId)}`, {
+    method: "PATCH",
+    body: JSON.stringify(input),
+  }).then((response) => response.user)
+}
+
+export function disableAdminUser(userId: string): Promise<ManagedUser> {
+  return apiFetch<{ user: ManagedUser }>(`/api/admin/users/${encodeURIComponent(userId)}/disable`, {
+    method: "POST",
+  }).then((response) => response.user)
+}
+
+export function restoreAdminUser(userId: string): Promise<ManagedUser> {
+  return apiFetch<{ user: ManagedUser }>(`/api/admin/users/${encodeURIComponent(userId)}/restore`, {
+    method: "POST",
+  }).then((response) => response.user)
+}
+
+export function resetAdminUserPassword(userId: string, password: string): Promise<void> {
+  return apiFetch<{ ok: true }>(`/api/admin/users/${encodeURIComponent(userId)}/reset-password`, {
+    method: "POST",
+    body: JSON.stringify({ password }),
+  }).then(() => undefined)
+}
+
+// Admin teams
+export function fetchAdminTeams(): Promise<ManagedTeam[]> {
+  return apiFetch<{ teams: ManagedTeam[] }>("/api/admin/teams").then((response) => response.teams)
+}
+
+export function createAdminTeam(input: { name: string }): Promise<ManagedTeam> {
+  return apiFetch<{ team: ManagedTeam }>("/api/admin/teams", {
+    method: "POST",
+    body: JSON.stringify(input),
+  }).then((response) => response.team)
+}
+
+export function updateAdminTeam(teamId: string, input: { name: string }): Promise<ManagedTeam> {
+  return apiFetch<{ team: ManagedTeam }>(`/api/admin/teams/${encodeURIComponent(teamId)}`, {
+    method: "PATCH",
+    body: JSON.stringify(input),
+  }).then((response) => response.team)
+}
+
+export function archiveAdminTeam(teamId: string): Promise<ManagedTeam> {
+  return apiFetch<{ team: ManagedTeam }>(`/api/admin/teams/${encodeURIComponent(teamId)}/archive`, {
+    method: "POST",
+  }).then((response) => response.team)
+}
+
+export function restoreAdminTeam(teamId: string): Promise<ManagedTeam> {
+  return apiFetch<{ team: ManagedTeam }>(`/api/admin/teams/${encodeURIComponent(teamId)}/restore`, {
+    method: "POST",
+  }).then((response) => response.team)
+}
+
+// Admin endpoints
+export function fetchAdminEndpoints(): Promise<ManagedEndpoint[]> {
+  return apiFetch<{ endpoints: ManagedEndpoint[] }>("/api/admin/endpoints").then(
+    (response) => response.endpoints
+  )
+}
+
+export function createAdminEndpoint(input: CreateAdminEndpointInput): Promise<ManagedEndpoint> {
+  return apiFetch<{ endpoint: ManagedEndpoint }>("/api/admin/endpoints", {
+    method: "POST",
+    body: JSON.stringify(input),
+  }).then((response) => response.endpoint)
+}
+
+export function updateAdminEndpoint(
+  endpointId: string,
+  input: UpdateAdminEndpointInput
+): Promise<ManagedEndpoint> {
+  return apiFetch<{ endpoint: ManagedEndpoint }>(
+    `/api/admin/endpoints/${encodeURIComponent(endpointId)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify(input),
+    }
+  ).then((response) => response.endpoint)
+}
+
+export function archiveAdminEndpoint(endpointId: string): Promise<ManagedEndpoint> {
+  return apiFetch<{ endpoint: ManagedEndpoint }>(
+    `/api/admin/endpoints/${encodeURIComponent(endpointId)}/archive`,
+    { method: "POST" }
+  ).then((response) => response.endpoint)
+}
+
+export function restoreAdminEndpoint(endpointId: string): Promise<ManagedEndpoint> {
+  return apiFetch<{ endpoint: ManagedEndpoint }>(
+    `/api/admin/endpoints/${encodeURIComponent(endpointId)}/restore`,
+    { method: "POST" }
+  ).then((response) => response.endpoint)
+}
+
+// Admin permissions and audit
+export function fetchAdminPermissionMatrix(): Promise<PermissionMatrix> {
+  return apiFetch<{ matrix: PermissionMatrix }>("/api/admin/permissions/matrix").then(
+    (response) => response.matrix
+  )
+}
+
+export function fetchAdminAudit(query: AuditQuery = {}): Promise<AuditResponse> {
+  const searchParams = new URLSearchParams()
+  appendQuery(searchParams, "actorUserId", query.actorUserId)
+  appendQuery(searchParams, "targetType", query.targetType)
+  appendQuery(searchParams, "targetId", query.targetId)
+  appendQuery(searchParams, "teamId", query.teamId)
+  appendQuery(searchParams, "action", query.action)
+  appendQuery(searchParams, "from", query.from)
+  appendQuery(searchParams, "to", query.to)
+  appendQuery(searchParams, "limit", query.limit)
+  appendQuery(searchParams, "offset", query.offset)
+
+  const queryString = searchParams.toString()
+  return apiFetch<AuditResponse>(`/api/admin/audit${queryString ? `?${queryString}` : ""}`)
+}
+
+function appendQuery(
+  searchParams: URLSearchParams,
+  key: string,
+  value: string | number | undefined
+): void {
+  if (value !== undefined && value !== "") {
+    searchParams.set(key, String(value))
+  }
 }
 
 export { ApiRequestError }
