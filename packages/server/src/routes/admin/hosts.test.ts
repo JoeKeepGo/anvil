@@ -429,7 +429,7 @@ function stateReport(overrides: { agentId?: string } = {}) {
 
 function hostStateAuditEntry(input: HostStateSyncCommitInput, state: HostStateRecord): AdminAuditEntry {
   return {
-    actorUserId: input.actorUserId,
+    actorUserId: input.actor.id,
     action: "host_state.sync",
     targetType: "host_state",
     targetId: state.id,
