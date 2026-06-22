@@ -251,14 +251,23 @@ export class PrismaHostStateStore implements HostStateStore {
         )
       `
 
-      const currentEndpoint = await tx.agentEndpoint.findUnique({
-        where: { id: input.endpoint.id },
-        select: endpointSummarySelect,
-      })
+      const [currentEndpoint] = await tx.$queryRaw<LockedHostStateEndpointRow[]>`
+        SELECT
+          e."id",
+          e."name",
+          e."status"::text AS "status",
+          t."id" AS "teamId",
+          t."name" AS "teamName",
+          t."status"::text AS "teamStatus"
+        FROM "AgentEndpoint" e
+        JOIN "Team" t ON t."id" = e."teamId"
+        WHERE e."id" = ${input.endpoint.id}
+        FOR UPDATE OF e, t
+      `
       if (!currentEndpoint) {
         throw new HostStateEndpointNotFoundError()
       }
-      const endpoint = mapPrismaEndpointSummary(currentEndpoint)
+      const endpoint = mapLockedEndpointSummary(currentEndpoint)
       assertCanSyncHostState(input.actor, endpoint.team.id)
       assertEndpointCanSync(endpoint)
 
@@ -683,21 +692,16 @@ const hostStateInclude = {
   },
 } as const
 
-const endpointSummarySelect = {
-  id: true,
-  name: true,
-  status: true,
-  team: {
-    select: {
-      id: true,
-      name: true,
-      status: true,
-    },
-  },
-} as const
-
 type PrismaHostStateClient = Pick<PrismaClient, "agentEndpoint" | "hostState" | "$transaction">
 type PrismaHostStateWithEndpoint = Prisma.HostStateGetPayload<{ include: typeof hostStateInclude }>
+interface LockedHostStateEndpointRow {
+  id: string
+  name: string
+  status: HostStateEndpointStatus
+  teamId: string
+  teamName: string
+  teamStatus: HostStateTeamStatus
+}
 
 function mapPrismaEndpointSummary(endpoint: {
   id: string
@@ -714,6 +718,19 @@ function mapPrismaEndpointSummary(endpoint: {
     name: endpoint.name,
     status: endpoint.status,
     team: endpoint.team,
+  }
+}
+
+function mapLockedEndpointSummary(endpoint: LockedHostStateEndpointRow): HostStateEndpointSummary {
+  return {
+    id: endpoint.id,
+    name: endpoint.name,
+    status: endpoint.status,
+    team: {
+      id: endpoint.teamId,
+      name: endpoint.teamName,
+      status: endpoint.teamStatus,
+    },
   }
 }
 

@@ -475,6 +475,188 @@ describe("admin host state service", () => {
   )
 
   test(
+    "locks endpoint status through the real PostgreSQL host-state commit",
+    {
+      skip: postgresHostStateSkip,
+    },
+    async () => {
+      await withPostgresHostStateFixture(async ({ prisma, store, endpointId, admin }) => {
+        const suffix = `host_state_lock_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`
+        const triggerName = `${suffix}_trigger`
+        const functionName = `${suffix}_fn`
+        const lockNamespace = 1_148_011
+        const lockKey = Math.floor(1_000_000 + Math.random() * 1_000_000_000)
+        const lockHolder = new PrismaClient()
+        const archiveClient = new PrismaClient()
+        let releaseLock!: () => void
+        let lockAcquired!: () => void
+        const release = new Promise<void>((resolve) => {
+          releaseLock = resolve
+        })
+        const acquired = new Promise<void>((resolve) => {
+          lockAcquired = resolve
+        })
+        const lockReady = (async () =>
+          lockHolder.$transaction(async (tx) => {
+            await tx.$executeRawUnsafe(`SELECT pg_advisory_lock(${lockNamespace}, ${lockKey})`)
+            lockAcquired()
+            await release
+            await tx.$executeRawUnsafe(`SELECT pg_advisory_unlock(${lockNamespace}, ${lockKey})`)
+          }))()
+        await acquired
+
+        try {
+          await prisma.$executeRawUnsafe(`
+            CREATE OR REPLACE FUNCTION "${functionName}"()
+            RETURNS trigger AS $$
+            BEGIN
+              PERFORM pg_advisory_lock(${lockNamespace}, ${lockKey});
+              PERFORM pg_advisory_unlock(${lockNamespace}, ${lockKey});
+              RETURN NEW;
+            END;
+            $$ LANGUAGE plpgsql
+          `)
+          await prisma.$executeRawUnsafe(`
+            CREATE TRIGGER "${triggerName}"
+            BEFORE INSERT OR UPDATE ON "HostState"
+            FOR EACH ROW EXECUTE FUNCTION "${functionName}"()
+          `)
+
+          const sync = syncEndpointHostState(store, admin, endpointId, {
+            createAgentClient: () => new RecordingAgent(stateResponse(stateReport({ agentId: "postgres-agent" }))),
+            now: () => new Date("2026-06-22T01:00:00.000Z"),
+          })
+          await waitForAdvisoryLockWait(prisma, lockNamespace, lockKey, sync)
+
+          let archiveBackendPid!: number
+          let archiveBackendReady!: () => void
+          const archiveBackendObserved = new Promise<void>((resolve) => {
+            archiveBackendReady = resolve
+          })
+          const archive = archiveClient
+            .$transaction(async (tx) => {
+              const rows = await tx.$queryRaw<Array<{ pid: number }>>`
+                SELECT pg_backend_pid() AS "pid"
+              `
+              archiveBackendPid = rows[0]?.pid ?? 0
+              archiveBackendReady()
+              await tx.agentEndpoint.update({
+                where: { id: endpointId },
+                data: { status: "ARCHIVED" },
+              })
+            })
+            .then(() => true)
+          await archiveBackendObserved
+          await waitForBackendLockWait(prisma, archiveBackendPid, archive)
+
+          releaseLock()
+          await Promise.all([lockReady, sync, archive])
+          assert.equal(await prisma.hostState.count({ where: { endpointId } }), 1)
+          assert.equal(await prisma.auditLog.count({ where: { action: "host_state.sync" } }), 1)
+        } finally {
+          releaseLock()
+          await lockReady.catch(() => {})
+          await prisma.$executeRawUnsafe(`DROP TRIGGER IF EXISTS "${triggerName}" ON "HostState"`)
+          await prisma.$executeRawUnsafe(`DROP FUNCTION IF EXISTS "${functionName}"()`)
+          await lockHolder.$disconnect()
+          await archiveClient.$disconnect()
+        }
+      })
+    }
+  )
+
+  test(
+    "locks team status through the real PostgreSQL host-state commit",
+    {
+      skip: postgresHostStateSkip,
+    },
+    async () => {
+      await withPostgresHostStateFixture(async ({ prisma, store, endpointId, teamId, admin }) => {
+        const suffix = `host_state_team_lock_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`
+        const triggerName = `${suffix}_trigger`
+        const functionName = `${suffix}_fn`
+        const lockNamespace = 1_148_012
+        const lockKey = Math.floor(1_000_000 + Math.random() * 1_000_000_000)
+        const lockHolder = new PrismaClient()
+        const archiveClient = new PrismaClient()
+        let releaseLock!: () => void
+        let lockAcquired!: () => void
+        const release = new Promise<void>((resolve) => {
+          releaseLock = resolve
+        })
+        const acquired = new Promise<void>((resolve) => {
+          lockAcquired = resolve
+        })
+        const lockReady = (async () =>
+          lockHolder.$transaction(async (tx) => {
+            await tx.$executeRawUnsafe(`SELECT pg_advisory_lock(${lockNamespace}, ${lockKey})`)
+            lockAcquired()
+            await release
+            await tx.$executeRawUnsafe(`SELECT pg_advisory_unlock(${lockNamespace}, ${lockKey})`)
+          }))()
+        await acquired
+
+        try {
+          await prisma.$executeRawUnsafe(`
+            CREATE OR REPLACE FUNCTION "${functionName}"()
+            RETURNS trigger AS $$
+            BEGIN
+              PERFORM pg_advisory_lock(${lockNamespace}, ${lockKey});
+              PERFORM pg_advisory_unlock(${lockNamespace}, ${lockKey});
+              RETURN NEW;
+            END;
+            $$ LANGUAGE plpgsql
+          `)
+          await prisma.$executeRawUnsafe(`
+            CREATE TRIGGER "${triggerName}"
+            BEFORE INSERT OR UPDATE ON "HostState"
+            FOR EACH ROW EXECUTE FUNCTION "${functionName}"()
+          `)
+
+          const sync = syncEndpointHostState(store, admin, endpointId, {
+            createAgentClient: () => new RecordingAgent(stateResponse(stateReport({ agentId: "postgres-agent" }))),
+            now: () => new Date("2026-06-22T01:00:00.000Z"),
+          })
+          await waitForAdvisoryLockWait(prisma, lockNamespace, lockKey, sync)
+
+          let archiveBackendPid!: number
+          let archiveBackendReady!: () => void
+          const archiveBackendObserved = new Promise<void>((resolve) => {
+            archiveBackendReady = resolve
+          })
+          const archive = archiveClient
+            .$transaction(async (tx) => {
+              const rows = await tx.$queryRaw<Array<{ pid: number }>>`
+                SELECT pg_backend_pid() AS "pid"
+              `
+              archiveBackendPid = rows[0]?.pid ?? 0
+              archiveBackendReady()
+              await tx.team.update({
+                where: { id: teamId },
+                data: { status: "ARCHIVED" },
+              })
+            })
+            .then(() => true)
+          await archiveBackendObserved
+          await waitForBackendLockWait(prisma, archiveBackendPid, archive)
+
+          releaseLock()
+          await Promise.all([lockReady, sync, archive])
+          assert.equal(await prisma.hostState.count({ where: { endpointId } }), 1)
+          assert.equal(await prisma.auditLog.count({ where: { action: "host_state.sync" } }), 1)
+        } finally {
+          releaseLock()
+          await lockReady.catch(() => {})
+          await prisma.$executeRawUnsafe(`DROP TRIGGER IF EXISTS "${triggerName}" ON "HostState"`)
+          await prisma.$executeRawUnsafe(`DROP FUNCTION IF EXISTS "${functionName}"()`)
+          await lockHolder.$disconnect()
+          await archiveClient.$disconnect()
+        }
+      })
+    }
+  )
+
+  test(
     "rolls back host state when the PostgreSQL Prisma audit write fails",
     {
       skip: postgresHostStateSkip,
@@ -735,6 +917,71 @@ class AgentBarrier {
     }
     await this.ready
   }
+}
+
+async function waitForAdvisoryLockWait(
+  prisma: PrismaClient,
+  lockNamespace: number,
+  lockKey: number,
+  sync: Promise<unknown>
+): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const rows = await prisma.$queryRaw<Array<{ waiting: bigint }>>`
+      SELECT COUNT(*)::bigint AS "waiting"
+      FROM pg_locks
+      WHERE locktype = 'advisory'
+        AND classid = ${lockNamespace}
+        AND objid = ${lockKey}
+        AND granted = false
+    `
+    if ((rows[0]?.waiting ?? 0n) > 0n) {
+      return
+    }
+    const completed = await Promise.race([
+      sync.then(
+        () => true,
+        () => true
+      ),
+      sleep(10).then(() => false),
+    ])
+    if (completed) {
+      throw new Error("Host state sync completed before the PostgreSQL lock gate was reached")
+    }
+  }
+  throw new Error(`Timed out waiting for PostgreSQL advisory lock ${lockNamespace}:${lockKey}`)
+}
+
+async function waitForBackendLockWait(
+  prisma: PrismaClient,
+  backendPid: number,
+  pending: Promise<unknown>
+): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const rows = await prisma.$queryRaw<Array<{ waiting: bigint }>>`
+      SELECT COUNT(*)::bigint AS "waiting"
+      FROM pg_locks
+      WHERE pid = ${backendPid}
+        AND granted = false
+    `
+    if ((rows[0]?.waiting ?? 0n) > 0n) {
+      return
+    }
+    const completed = await Promise.race([
+      pending.then(
+        () => true,
+        () => true
+      ),
+      sleep(10).then(() => false),
+    ])
+    if (completed) {
+      throw new Error(`Backend ${backendPid} completed before PostgreSQL reported a lock wait`)
+    }
+  }
+  throw new Error(`Timed out waiting for backend ${backendPid} to block on a PostgreSQL lock`)
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 function stateReport(
