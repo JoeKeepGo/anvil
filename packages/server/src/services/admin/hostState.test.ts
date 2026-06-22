@@ -56,6 +56,22 @@ const teamViewer: AdminPrincipal = {
   ],
 }
 
+const teamSyncer: AdminPrincipal = {
+  id: "syncer-1",
+  email: "syncer@example.com",
+  name: "Syncer User",
+  status: "ACTIVE",
+  globalRole: "MEMBER",
+  teams: [
+    {
+      id: "team-1",
+      name: "Primary Team",
+      role: "OWNER",
+      status: "ACTIVE",
+    },
+  ],
+}
+
 const memberWithoutHostAccess: AdminPrincipal = {
   id: "member-1",
   email: "member@example.com",
@@ -285,6 +301,41 @@ describe("admin host state service", () => {
     assert.equal(store.auditEntries.length, 1)
   })
 
+  test("sync revalidates endpoint status and authorization at commit time", async () => {
+    const archivedStore = new TestHostStateStore()
+    archivedStore.addEndpoint(activeEndpoint())
+    archivedStore.beforeCommit = () => {
+      archivedStore.addEndpoint({ ...activeEndpoint(), status: "ARCHIVED" })
+    }
+
+    await assert.rejects(
+      syncEndpointHostState(archivedStore, globalAdmin, "endpoint-1", {
+        createAgentClient: () => new RecordingAgent(stateResponse(stateReport())),
+      }),
+      HostStateEndpointArchivedError
+    )
+    assert.deepEqual(await archivedStore.listHostStates(), [])
+    assert.deepEqual(archivedStore.auditEntries, [])
+
+    const reassignedStore = new TestHostStateStore()
+    reassignedStore.addEndpoint(activeEndpoint())
+    reassignedStore.beforeCommit = () => {
+      reassignedStore.addEndpoint({
+        ...activeEndpoint(),
+        team: { id: "team-2", name: "Other Team", status: "ACTIVE" },
+      })
+    }
+
+    await assert.rejects(
+      syncEndpointHostState(reassignedStore, teamSyncer, "endpoint-1", {
+        createAgentClient: () => new RecordingAgent(stateResponse(stateReport())),
+      }),
+      HostStatePermissionDeniedError
+    )
+    assert.deepEqual(await reassignedStore.listHostStates(), [])
+    assert.deepEqual(reassignedStore.auditEntries, [])
+  })
+
   test("sync rejects concurrent first reports with different agent identities", async () => {
     const store = new RaceyFirstSyncStore()
     store.addEndpoint(activeEndpoint())
@@ -397,6 +448,33 @@ describe("admin host state service", () => {
   )
 
   test(
+    "revalidates endpoint status after the agent call in the real PostgreSQL Prisma store",
+    {
+      skip: postgresHostStateSkip,
+    },
+    async () => {
+      await withPostgresHostStateFixture(async ({ prisma, store, endpointId, admin }) => {
+        const agent = new MutatingAgent(stateResponse(stateReport({ agentId: "postgres-agent" })), async () => {
+          await prisma.agentEndpoint.update({
+            where: { id: endpointId },
+            data: { status: "ARCHIVED" },
+          })
+        })
+
+        await assert.rejects(
+          syncEndpointHostState(store, admin, endpointId, {
+            createAgentClient: () => agent,
+            now: () => new Date("2026-06-22T01:00:00.000Z"),
+          }),
+          HostStateEndpointArchivedError
+        )
+        assert.equal(await prisma.hostState.count({ where: { endpointId } }), 0)
+        assert.equal(await prisma.auditLog.count({ where: { action: "host_state.sync" } }), 0)
+      })
+    }
+  )
+
+  test(
     "rolls back host state when the PostgreSQL Prisma audit write fails",
     {
       skip: postgresHostStateSkip,
@@ -430,6 +508,7 @@ class TestHostStateStore implements HostStateStore {
   readonly auditEntries: AdminAuditEntry[] = []
   credentialLoads = 0
   failAuditWrites = false
+  beforeCommit?: () => void
 
   async listHostStates(): Promise<HostStateRecord[]> {
     return [...this.statesByEndpoint.values()]
@@ -449,14 +528,21 @@ class TestHostStateStore implements HostStateStore {
   }
 
   async syncHostState(input: HostStateSyncCommitInput): Promise<HostStateRecord> {
-    const existing = this.statesByEndpoint.get(input.endpoint.id)
+    this.beforeCommit?.()
+    const currentEndpoint = this.endpoints.get(input.endpoint.id)
+    if (!currentEndpoint) {
+      throw new HostStateEndpointNotFoundError()
+    }
+    assertCanSyncAtCommit(input.actor, currentEndpoint)
+
+    const existing = this.statesByEndpoint.get(currentEndpoint.id)
     if (existing && existing.agent.id !== input.agent.id) {
       throw new HostStateAgentConflictError()
     }
 
-    const state = this.writeHostState(input)
+    const state = this.writeHostState({ ...input, endpoint: currentEndpoint })
     try {
-      await this.recordAudit(hostStateAuditEntry(input, state))
+      await this.recordAudit(hostStateAuditEntry({ ...input, endpoint: currentEndpoint }, state))
     } catch (error) {
       if (existing) {
         this.statesByEndpoint.set(input.endpoint.id, existing)
@@ -524,7 +610,7 @@ class RaceyFirstSyncStore extends TestHostStateStore {
 
 function hostStateAuditEntry(input: HostStateSyncCommitInput, state: HostStateRecord): AdminAuditEntry {
   return {
-    actorUserId: input.actorUserId,
+    actorUserId: input.actor.id,
     action: "host_state.sync",
     targetType: "host_state",
     targetId: state.id,
@@ -538,6 +624,20 @@ function hostStateAuditEntry(input: HostStateSyncCommitInput, state: HostStateRe
       stateSchemaVersion: state.agent.stateSchemaVersion,
     },
   }
+}
+
+function assertCanSyncAtCommit(actor: AdminPrincipal, endpoint: HostStateSyncEndpoint): void {
+  if (endpoint.status === "ARCHIVED" || endpoint.team.status === "ARCHIVED") {
+    throw new HostStateEndpointArchivedError()
+  }
+  if (actor.globalRole === "ADMIN") {
+    return
+  }
+  const team = actor.teams.find((candidate) => candidate.id === endpoint.team.id)
+  if (team?.status === "ACTIVE" && (team.role === "OWNER" || team.role === "MAINTAINER")) {
+    return
+  }
+  throw new HostStatePermissionDeniedError()
 }
 
 class RecordingAgent implements HostStateAgentClient {
@@ -596,6 +696,23 @@ class CoordinatedAgent implements HostStateAgentClient {
   async execute(request: AgentRequest): Promise<AgentResponse> {
     this.calls.push(request)
     await this.barrier.arrive()
+    return this.response
+  }
+
+  close(): void {}
+}
+
+class MutatingAgent implements HostStateAgentClient {
+  readonly calls: AgentRequest[] = []
+
+  constructor(
+    private readonly response: AgentResponse,
+    private readonly mutate: () => Promise<void>
+  ) {}
+
+  async execute(request: AgentRequest): Promise<AgentResponse> {
+    this.calls.push(request)
+    await this.mutate()
     return this.response
   }
 

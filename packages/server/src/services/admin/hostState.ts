@@ -93,7 +93,7 @@ export interface HostStateSnapshotSummary {
 }
 
 export interface HostStateUpsertInput {
-  endpoint: HostStateSyncEndpoint
+  endpoint: HostStateEndpointSummary
   agent: HostStateAgentSummary
   host: HostStateHostSummary
   incus: HostStateIncusSummary
@@ -103,7 +103,7 @@ export interface HostStateUpsertInput {
 }
 
 export interface HostStateSyncCommitInput extends HostStateUpsertInput {
-  actorUserId: string
+  actor: AdminPrincipal
 }
 
 export interface HostStateStore {
@@ -251,8 +251,19 @@ export class PrismaHostStateStore implements HostStateStore {
         )
       `
 
+      const currentEndpoint = await tx.agentEndpoint.findUnique({
+        where: { id: input.endpoint.id },
+        select: endpointSummarySelect,
+      })
+      if (!currentEndpoint) {
+        throw new HostStateEndpointNotFoundError()
+      }
+      const endpoint = mapPrismaEndpointSummary(currentEndpoint)
+      assertCanSyncHostState(input.actor, endpoint.team.id)
+      assertEndpointCanSync(endpoint)
+
       const existing = await tx.hostState.findUnique({
-        where: { endpointId: input.endpoint.id },
+        where: { endpointId: endpoint.id },
         select: { agentId: true },
       })
       if (existing && existing.agentId !== input.agent.id) {
@@ -260,23 +271,23 @@ export class PrismaHostStateStore implements HostStateStore {
       }
 
       const nextState = await tx.hostState.upsert({
-        where: { endpointId: input.endpoint.id },
+        where: { endpointId: endpoint.id },
         create: {
-          endpointId: input.endpoint.id,
-          ...hostStatePersistenceFields(input),
+          endpointId: endpoint.id,
+          ...hostStatePersistenceFields({ ...input, endpoint }),
           firstSeenAt: observedAt,
           lastSeenAt: observedAt,
           status: "ONLINE",
         },
         update: {
-          ...hostStatePersistenceFields(input),
+          ...hostStatePersistenceFields({ ...input, endpoint }),
           lastSeenAt: observedAt,
           status: "ONLINE",
         },
         include: hostStateInclude,
       })
       const record = mapPrismaHostState(nextState)
-      const auditEntry = hostStateSyncAuditEntry(input, record)
+      const auditEntry = hostStateSyncAuditEntry({ ...input, endpoint }, record)
       await tx.auditLog.create({
         data: {
           actorId: auditEntry.actorUserId,
@@ -351,7 +362,7 @@ export async function syncEndpointHostState(
     endpoint,
     ...report,
     observedAt,
-    actorUserId: actor.id,
+    actor,
   })
 }
 
@@ -642,7 +653,7 @@ function hostStateSyncAuditEntry(
   state: HostStateRecord
 ): AdminAuditEntry {
   return {
-    actorUserId: input.actorUserId,
+    actorUserId: input.actor.id,
     action: "host_state.sync",
     targetType: "host_state",
     targetId: state.id,
@@ -668,6 +679,19 @@ const hostStateInclude = {
           status: true,
         },
       },
+    },
+  },
+} as const
+
+const endpointSummarySelect = {
+  id: true,
+  name: true,
+  status: true,
+  team: {
+    select: {
+      id: true,
+      name: true,
+      status: true,
     },
   },
 } as const
