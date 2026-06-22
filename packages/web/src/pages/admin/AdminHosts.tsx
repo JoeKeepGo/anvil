@@ -33,13 +33,14 @@ const staleThresholdMs = 15 * 60 * 1000
 
 export function AdminHosts() {
   const { session } = useOutletContext<AppShellContext>()
-  const hostsApi = useApi(fetchAdminHosts)
   const [displayHosts, setDisplayHosts] = useState<AdminHostState[]>([])
   const [syncingEndpointId, setSyncingEndpointId] = useState<string | null>(null)
   const [syncError, setSyncError] = useState<string | null>(null)
   const [syncNotice, setSyncNotice] = useState<string | null>(null)
   const canRead =
     hasAnyGlobalAction(session.access, ["hosts:read"]) || hasAnyTeamAction(session.access, "hosts:read")
+  const hostsApi = useApi(fetchAdminHosts, { enabled: canRead })
+
   useEffect(() => {
     if (hostsApi.data) {
       setDisplayHosts(hostsApi.data)

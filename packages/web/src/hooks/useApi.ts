@@ -7,13 +7,24 @@ interface UseApiState<T> {
   refetch: () => void
 }
 
-export function useApi<T>(fetcher: () => Promise<T>): UseApiState<T> {
+interface UseApiOptions {
+  enabled?: boolean
+}
+
+export function useApi<T>(fetcher: () => Promise<T>, options: UseApiOptions = {}): UseApiState<T> {
+  const enabled = options.enabled ?? true
   const [data, setData] = useState<T | null>(null)
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(enabled)
   const [error, setError] = useState<string | null>(null)
   const mountedRef = useRef(true)
 
   const fetchData = useCallback(() => {
+    if (!enabled) {
+      setLoading(false)
+      setError(null)
+      return
+    }
+
     setLoading(true)
     setError(null)
     fetcher()
@@ -26,7 +37,7 @@ export function useApi<T>(fetcher: () => Promise<T>): UseApiState<T> {
       .finally(() => {
         if (mountedRef.current) setLoading(false)
       })
-  }, [fetcher])
+  }, [enabled, fetcher])
 
   useEffect(() => {
     mountedRef.current = true
