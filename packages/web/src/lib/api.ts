@@ -21,6 +21,7 @@ import type {
   CreateAdminTenantInput,
   CreateAdminTenantResponse,
   CreateAdminUserInput,
+  AdminHostState,
   AdminProjectDetail,
   ManagedEndpoint,
   ManagedEndpointProjectBinding,
@@ -247,6 +248,24 @@ export function restoreAdminEndpoint(endpointId: string): Promise<ManagedEndpoin
     `/api/admin/endpoints/${encodeURIComponent(endpointId)}/restore`,
     { method: "POST" }
   ).then((response) => response.endpoint)
+}
+
+// Admin hosts
+export function fetchAdminHosts(): Promise<AdminHostState[]> {
+  return apiFetch<{ hosts: AdminHostState[] }>("/api/admin/hosts").then((response) => response.hosts)
+}
+
+export function fetchAdminHost(hostId: string): Promise<AdminHostState> {
+  return apiFetch<{ host: AdminHostState }>(`/api/admin/hosts/${encodeURIComponent(hostId)}`).then(
+    (response) => response.host
+  )
+}
+
+export function syncAdminHostState(endpointId: string): Promise<AdminHostState> {
+  return apiFetch<{ host: AdminHostState }>(
+    `/api/admin/endpoints/${encodeURIComponent(endpointId)}/agent-state/sync`,
+    { method: "POST" }
+  ).then((response) => response.host)
 }
 
 // Admin tenants

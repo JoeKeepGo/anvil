@@ -10,6 +10,7 @@ import { Login } from "@/pages/Login"
 import { AdminAudit } from "@/pages/admin/AdminAudit"
 import { AdminBootstrap } from "@/pages/admin/AdminBootstrap"
 import { AdminEndpoints } from "@/pages/admin/AdminEndpoints"
+import { AdminHosts } from "@/pages/admin/AdminHosts"
 import { AdminOverview } from "@/pages/admin/AdminOverview"
 import { AdminPermissions } from "@/pages/admin/AdminPermissions"
 import { AdminProjectDetail, AdminProjects } from "@/pages/admin/AdminProjects"
@@ -36,6 +37,7 @@ export function App() {
             <Route path="users" element={<AdminUsers />} />
             <Route path="teams" element={<AdminTeams />} />
             <Route path="endpoints" element={<AdminEndpoints />} />
+            <Route path="hosts" element={<AdminHosts />} />
             <Route path="tenants" element={<AdminTenants />} />
             <Route path="tenants/:tenantId" element={<AdminTenantDetail />} />
             <Route path="projects" element={<AdminProjects />} />

@@ -4,6 +4,7 @@ import {
   KeyRound,
   Network,
   PanelsTopLeft,
+  Server,
   ShieldCheck,
   Users,
   UsersRound,
@@ -39,6 +40,15 @@ const sections = [
     enabled: (context: AppShellContext) =>
       hasAnyGlobalAction(context.session.access, ["endpoints:read", "endpoints:write"]) ||
       hasAnyTeamAction(context.session.access, "endpoints:read"),
+  },
+  {
+    to: "/admin/hosts",
+    title: "Hosts",
+    detail: "Review persisted host state and trigger safe sync actions.",
+    icon: Server,
+    enabled: (context: AppShellContext) =>
+      hasAnyGlobalAction(context.session.access, ["hosts:read"]) ||
+      hasAnyTeamAction(context.session.access, "hosts:read"),
   },
   {
     to: "/admin/tenants",

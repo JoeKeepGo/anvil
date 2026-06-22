@@ -14,20 +14,22 @@ describe("admin access helpers", () => {
     const access: AdminAccessSummary = {
       bootstrapComplete: true,
       canAdmin: true,
-      globalActions: ["users:read", "audit:read", "tenants:read"],
+      globalActions: ["users:read", "audit:read", "tenants:read", "hosts:read"],
       tenants: [{ tenantId: "tenant-1", actions: ["tenants:read", "projects:read"] }],
       projects: [{ projectId: "project-1", tenantId: "tenant-1", actions: ["projects:read"] }],
-      teams: [{ teamId: "team-1", actions: ["endpoints:read"] }],
+      teams: [{ teamId: "team-1", actions: ["endpoints:read", "hosts:sync"] }],
     }
 
     assert.equal(canUseAdminConsole(access), true)
     assert.equal(hasGlobalAction(access, "users:read"), true)
+    assert.equal(hasGlobalAction(access, "hosts:read"), true)
     assert.equal(hasGlobalAction(access, "users:write"), false)
     assert.equal(hasTenantAction(access, "tenant-1", "projects:read"), true)
     assert.equal(hasTenantAction(access, "tenant-2", "projects:read"), false)
     assert.equal(hasProjectAction(access, "project-1", "projects:read"), true)
     assert.equal(hasProjectAction(access, "project-2", "projects:read"), false)
     assert.equal(hasTeamAction(access, "team-1", "endpoints:read"), true)
+    assert.equal(hasTeamAction(access, "team-1", "hosts:sync"), true)
     assert.equal(hasTeamAction(access, "team-2", "endpoints:read"), false)
   })
 

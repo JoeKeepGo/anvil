@@ -13,6 +13,8 @@ import {
   createAdminUser,
   fetchAdminAudit,
   fetchAdminEndpoints,
+  fetchAdminHosts,
+  fetchAdminHost,
   fetchAdminPermissionMatrix,
   fetchAdminProject,
   fetchAdminProjects,
@@ -30,6 +32,7 @@ import {
   restoreAdminTenant,
   setAdminProjectQuota,
   setAdminProjectTenantQuota,
+  syncAdminHostState,
   updateAdminProject,
   updateAdminProjectTenant,
   updateAdminTenant,
@@ -330,6 +333,86 @@ describe("admin API helpers", () => {
     const audit = await fetchAdminAudit({ targetType: "endpoint", limit: 25 })
     assert.equal(audit.audit[0]?.metadata?.token, "[REDACTED]")
     assert.equal(fetchCalls.at(-1)?.input, "/api/admin/audit?targetType=endpoint&limit=25")
+  })
+
+  test("host state helpers consume M11 envelopes and never expose endpoint secrets", async () => {
+    const host = {
+      id: "host-state-1",
+      endpoint: {
+        id: "endpoint-1",
+        name: "Local VM",
+        status: "ACTIVE",
+      },
+      agent: {
+        id: "11111111-1111-4111-8111-111111111111",
+        version: "dev",
+        stateSchemaVersion: 1,
+        startedAt: "2026-06-22T00:00:00.000Z",
+        reportedAt: "2026-06-22T00:30:00.000Z",
+      },
+      host: {
+        hostname: "anvil-local-vm",
+        os: "linux",
+        arch: "arm64",
+      },
+      incus: {
+        available: true,
+        statusCode: 200,
+        serverVersion: "6.12",
+        apiVersion: "1.0",
+      },
+      capabilities: {
+        incusProxy: true,
+        events: true,
+        stateReport: true,
+        wireGuard: false,
+        vmLifecycle: false,
+      },
+      snapshot: {
+        instancesTotal: 0,
+        imagesTotal: 1,
+        operationsTotal: 0,
+      },
+      status: "ONLINE",
+      firstSeenAt: "2026-06-22T01:00:00.000Z",
+      lastSeenAt: "2026-06-22T02:00:00.000Z",
+    }
+
+    installJsonFetch(200, { hosts: [host] })
+    const hosts = await fetchAdminHosts()
+
+    assert.equal(fetchCalls.at(-1)?.input, "/api/admin/hosts")
+    assert.equal(fetchCalls.at(-1)?.init?.credentials, "include")
+    assert.equal(hosts[0]?.endpoint.id, "endpoint-1")
+    assert.equal(hosts[0]?.agent.stateSchemaVersion, 1)
+
+    installJsonFetch(200, { host })
+    const detail = await fetchAdminHost("host-state-1")
+
+    assert.equal(fetchCalls.at(-1)?.input, "/api/admin/hosts/host-state-1")
+    assert.equal(detail.id, "host-state-1")
+
+    installJsonFetch(200, { host: { ...host, snapshot: { ...host.snapshot, instancesTotal: 3 } } })
+    const synced = await syncAdminHostState("endpoint-1")
+
+    assert.equal(fetchCalls.at(-1)?.input, "/api/admin/endpoints/endpoint-1/agent-state/sync")
+    assert.equal(fetchCalls.at(-1)?.init?.method, "POST")
+    assert.equal(synced.snapshot.instancesTotal, 3)
+
+    const serialized = JSON.stringify([hosts, detail, synced])
+    for (const forbidden of [
+      "endpoint-token",
+      "tokenCiphertext",
+      "passwordHash",
+      "sessionSecret",
+      "authorization",
+      "cookie",
+      "rawIncus",
+      "/var/lib/incus/unix.socket",
+      "ws://127.0.0.1:19090/ws",
+    ]) {
+      assert.equal(serialized.includes(forbidden), false, `host API helper leaked ${forbidden}`)
+    }
   })
 
   test("admin mutation helpers post only to /api/admin routes and keep endpoint tokens out of responses", async () => {
