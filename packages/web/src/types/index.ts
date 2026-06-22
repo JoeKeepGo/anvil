@@ -94,6 +94,7 @@ export type MembershipStatus = "ACTIVE" | "REMOVED"
 export type EndpointStatus = "ACTIVE" | "ARCHIVED"
 export type TenantStatus = "ACTIVE" | "ARCHIVED"
 export type ProjectStatus = "ACTIVE" | "ARCHIVED"
+export type HostStateStatus = "ONLINE"
 export type ProjectTenantRole = "OWNER" | "PARTICIPANT"
 export type ProjectTenantStatus = "ACTIVE" | "REMOVED"
 export type EndpointProjectBindingStatus = "ACTIVE" | "REMOVED"
@@ -129,6 +130,8 @@ export type GlobalAction =
   | "quotas:read"
   | "quotas:write"
   | "resources:read"
+  | "hosts:read"
+  | "hosts:sync"
 
 export type TeamAction =
   | "members:read"
@@ -136,6 +139,8 @@ export type TeamAction =
   | "endpoints:read"
   | "endpoints:write"
   | "audit:read"
+  | "hosts:read"
+  | "hosts:sync"
 
 export type TenantAction = "tenants:read" | "projects:read" | "resources:read"
 export type ProjectAction = "projects:read" | "quotas:read" | "resources:read"
@@ -242,6 +247,67 @@ export interface ManagedEndpoint {
     status: TeamStatus
   }
   credentialConfigured: boolean
+}
+
+export interface AdminHostTeamSummary {
+  id: string
+  name: string
+  status: TeamStatus
+}
+
+export interface AdminHostEndpointSummary {
+  id: string
+  name: string
+  status: EndpointStatus
+  team?: AdminHostTeamSummary
+}
+
+export interface AdminHostAgentSummary {
+  id: string
+  version: string
+  stateSchemaVersion: number
+  startedAt: string
+  reportedAt: string
+}
+
+export interface AdminHostSummary {
+  hostname: string
+  os: string
+  arch: string
+}
+
+export interface AdminHostIncusSummary {
+  available: boolean
+  statusCode: number
+  serverVersion?: string
+  apiVersion?: string
+}
+
+export interface AdminHostCapabilitySummary {
+  incusProxy: boolean
+  events: boolean
+  stateReport: boolean
+  wireGuard: boolean
+  vmLifecycle: boolean
+}
+
+export interface AdminHostSnapshotSummary {
+  instancesTotal: number
+  imagesTotal: number
+  operationsTotal: number
+}
+
+export interface AdminHostState {
+  id: string
+  endpoint: AdminHostEndpointSummary
+  agent: AdminHostAgentSummary
+  host: AdminHostSummary
+  incus: AdminHostIncusSummary
+  capabilities: AdminHostCapabilitySummary
+  snapshot: AdminHostSnapshotSummary
+  status: HostStateStatus
+  firstSeenAt: string
+  lastSeenAt: string
 }
 
 export interface ManagedTenant {

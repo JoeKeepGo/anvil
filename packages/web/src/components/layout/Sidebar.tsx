@@ -9,6 +9,7 @@ import {
   LogOut,
   Network,
   PanelsTopLeft,
+  Server,
   Settings,
   ShieldCheck,
   Users,
@@ -16,7 +17,7 @@ import {
 } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { canUseAdminConsole, hasAnyGlobalAction } from "@/lib/adminAccess"
+import { canUseAdminConsole, hasAnyGlobalAction, hasAnyTeamAction } from "@/lib/adminAccess"
 import type { AdminAccessSummary, AuthSession } from "@/types"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -41,6 +42,13 @@ const adminNavItems: AdminNavItem[] = [
   { to: "/admin/users", icon: Users, label: "Users" },
   { to: "/admin/teams", icon: UsersRound, label: "Teams" },
   { to: "/admin/endpoints", icon: KeyRound, label: "Endpoints" },
+  {
+    to: "/admin/hosts",
+    icon: Server,
+    label: "Hosts",
+    enabled: (access: AdminAccessSummary) =>
+      hasAnyGlobalAction(access, ["hosts:read"]) || hasAnyTeamAction(access, "hosts:read"),
+  },
   {
     to: "/admin/tenants",
     icon: Network,
