@@ -28,13 +28,13 @@ describe("admin router scaffold", () => {
     }
   })
 
-  test("mounts Phase 4 prefixes as authenticated admin routes", async () => {
+  test("mounts Phase 4 and Phase 3 host-state prefixes as authenticated admin routes", async () => {
     const routes = createAdminRoutes({
       store: new TestAdminStore(),
       env: { ANVIL_SESSION_SECRET: "test-session-secret-with-enough-entropy" },
     })
 
-    for (const path of ["/endpoints", "/permissions/matrix", "/audit"]) {
+    for (const path of ["/endpoints", "/permissions/matrix", "/audit", "/hosts"]) {
       const response = await routes.request(path)
 
       assert.equal(response.status, 401, `${path} should be mounted as a protected Phase 4 route`)
@@ -46,6 +46,23 @@ describe("admin router scaffold", () => {
         },
       })
     }
+
+    const syncResponse = await routes.request("/endpoints/endpoint-1/agent-state/sync", {
+      method: "POST",
+    })
+
+    assert.equal(
+      syncResponse.status,
+      401,
+      "/endpoints/endpoint-1/agent-state/sync should be mounted as a protected Phase 3 POST route"
+    )
+    assert.deepEqual(await syncResponse.json(), {
+      error: {
+        code: "UNAUTHENTICATED",
+        message: "Authentication is required.",
+        details: {},
+      },
+    })
   })
 
   test("keeps bootstrap routes mounted while adding downstream scaffold prefixes", async () => {

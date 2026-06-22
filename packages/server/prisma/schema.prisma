@@ -55,6 +55,7 @@ model AgentEndpoint {
   status             EndpointStatus           @default(ACTIVE)
   teamId             String
   team               Team                     @relation(fields: [teamId], references: [id])
+  hostState          HostState?
   projectBindings    EndpointProjectBinding[]
   resourceOwnerships ResourceOwnership[]
   createdAt          DateTime                 @default(now())
@@ -204,6 +205,40 @@ model ResourceOwnership {
   @@index([tenantId])
 }
 
+model HostState {
+  id                      String          @id @default(uuid())
+  endpointId              String          @unique
+  endpoint                AgentEndpoint   @relation(fields: [endpointId], references: [id])
+  agentId                 String
+  agentVersion            String
+  agentStateSchemaVersion Int
+  agentStartedAt          DateTime
+  agentReportedAt         DateTime
+  hostHostname            String
+  hostOs                  String
+  hostArch                String
+  incusAvailable          Boolean
+  incusStatusCode         Int
+  incusServerVersion      String?
+  incusApiVersion         String?
+  capabilityIncusProxy    Boolean
+  capabilityEvents        Boolean
+  capabilityStateReport   Boolean
+  capabilityWireGuard     Boolean
+  capabilityVmLifecycle   Boolean
+  snapshotInstancesTotal  Int
+  snapshotImagesTotal     Int
+  snapshotOperationsTotal Int
+  status                  HostStateStatus @default(ONLINE)
+  firstSeenAt             DateTime        @default(now())
+  lastSeenAt              DateTime
+  createdAt               DateTime        @default(now())
+  updatedAt               DateTime        @updatedAt
+
+  @@index([agentId])
+  @@index([lastSeenAt])
+}
+
 enum GlobalRole {
   ADMIN
   MEMBER
@@ -264,4 +299,8 @@ enum ResourceType {
   INSTANCE
   IMAGE
   OPERATION
+}
+
+enum HostStateStatus {
+  ONLINE
 }

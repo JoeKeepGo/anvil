@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import { describe, test } from "node:test"
 import bcrypt from "bcryptjs"
 import { createAuthRoutes } from "./auth"
+import { globalAdminActions, teamOwnerActions } from "../services/admin/permissions"
 import type {
   AdminAuditEntry,
   AdminDataStore,
@@ -196,28 +197,13 @@ describe("auth routes", () => {
       access: {
         bootstrapComplete: true,
         canAdmin: true,
-        globalActions: [
-          "users:read",
-          "users:write",
-          "teams:read",
-          "teams:write",
-          "endpoints:read",
-          "endpoints:write",
-          "audit:read",
-          "tenants:read",
-          "tenants:write",
-          "projects:read",
-          "projects:write",
-          "quotas:read",
-          "quotas:write",
-          "resources:read",
-        ],
+        globalActions: globalAdminActions,
         tenants: [],
         projects: [],
         teams: [
           {
             teamId: "team-1",
-            actions: ["members:read", "members:write", "endpoints:read", "endpoints:write", "audit:read"],
+            actions: teamOwnerActions,
           },
         ],
       },
@@ -397,7 +383,7 @@ describe("auth routes", () => {
         teams: [
           {
             teamId: "team-1",
-            actions: ["members:read", "endpoints:read", "audit:read"],
+            actions: ["members:read", "endpoints:read", "audit:read", "hosts:read"],
           },
         ],
       },
