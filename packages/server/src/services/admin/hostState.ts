@@ -10,9 +10,11 @@ import {
 } from "../agent"
 import { AuthConfigError } from "../auth"
 import { decryptEndpointToken, EndpointTokenKeyError } from "./endpoints"
-import { recordAdminAudit } from "./audit"
 import { canPerformGlobalAction, canPerformTeamAction } from "./permissions"
 import type { AdminAuditEntry, AdminPrincipal } from "./session"
+
+const maxPostgresInteger = 2147483647
+const hostStateAdvisoryLockNamespace = 0x4d313148
 
 export type HostStateEndpointStatus = "ACTIVE" | "ARCHIVED"
 export type HostStateTeamStatus = "ACTIVE" | "ARCHIVED"
@@ -100,13 +102,16 @@ export interface HostStateUpsertInput {
   observedAt: string
 }
 
+export interface HostStateSyncCommitInput extends HostStateUpsertInput {
+  actorUserId: string
+}
+
 export interface HostStateStore {
   listHostStates(): Promise<HostStateRecord[]>
   getHostState(hostStateId: string): Promise<HostStateRecord | null>
+  getEndpointForHostStateSyncAuth(endpointId: string): Promise<HostStateEndpointSummary | null>
   getEndpointForHostStateSync(endpointId: string): Promise<HostStateSyncEndpoint | null>
-  getHostStateByEndpointId(endpointId: string): Promise<HostStateRecord | null>
-  upsertHostState(input: HostStateUpsertInput): Promise<HostStateRecord>
-  recordAudit(entry: AdminAuditEntry): Promise<void>
+  syncHostState(input: HostStateSyncCommitInput): Promise<HostStateRecord>
 }
 
 export interface HostStateAgentClient {
@@ -193,6 +198,26 @@ export class PrismaHostStateStore implements HostStateStore {
     return state ? mapPrismaHostState(state) : null
   }
 
+  async getEndpointForHostStateSyncAuth(endpointId: string): Promise<HostStateEndpointSummary | null> {
+    this.assertDatabaseConfigured()
+    const endpoint = await this.prisma.agentEndpoint.findUnique({
+      where: { id: endpointId },
+      select: {
+        id: true,
+        name: true,
+        status: true,
+        team: {
+          select: {
+            id: true,
+            name: true,
+            status: true,
+          },
+        },
+      },
+    })
+    return endpoint ? mapPrismaEndpointSummary(endpoint) : null
+  }
+
   async getEndpointForHostStateSync(endpointId: string): Promise<HostStateSyncEndpoint | null> {
     this.assertDatabaseConfigured()
     const endpoint = await this.prisma.agentEndpoint.findUnique({
@@ -215,49 +240,56 @@ export class PrismaHostStateStore implements HostStateStore {
     return endpoint ? mapPrismaEndpointForSync(endpoint) : null
   }
 
-  async getHostStateByEndpointId(endpointId: string): Promise<HostStateRecord | null> {
-    this.assertDatabaseConfigured()
-    const state = await this.prisma.hostState.findUnique({
-      where: { endpointId },
-      include: hostStateInclude,
-    })
-    return state ? mapPrismaHostState(state) : null
-  }
-
-  async upsertHostState(input: HostStateUpsertInput): Promise<HostStateRecord> {
+  async syncHostState(input: HostStateSyncCommitInput): Promise<HostStateRecord> {
     this.assertDatabaseConfigured()
     const observedAt = new Date(input.observedAt)
-    const state = await this.prisma.hostState.upsert({
-      where: { endpointId: input.endpoint.id },
-      create: {
-        endpointId: input.endpoint.id,
-        ...hostStatePersistenceFields(input),
-        firstSeenAt: observedAt,
-        lastSeenAt: observedAt,
-        status: "ONLINE",
-      },
-      update: {
-        ...hostStatePersistenceFields(input),
-        lastSeenAt: observedAt,
-        status: "ONLINE",
-      },
-      include: hostStateInclude,
+    const state = await this.prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`
+        SELECT pg_advisory_xact_lock(
+          ${hostStateAdvisoryLockNamespace}::int,
+          hashtext(${input.endpoint.id})::int
+        )
+      `
+
+      const existing = await tx.hostState.findUnique({
+        where: { endpointId: input.endpoint.id },
+        select: { agentId: true },
+      })
+      if (existing && existing.agentId !== input.agent.id) {
+        throw new HostStateAgentConflictError()
+      }
+
+      const nextState = await tx.hostState.upsert({
+        where: { endpointId: input.endpoint.id },
+        create: {
+          endpointId: input.endpoint.id,
+          ...hostStatePersistenceFields(input),
+          firstSeenAt: observedAt,
+          lastSeenAt: observedAt,
+          status: "ONLINE",
+        },
+        update: {
+          ...hostStatePersistenceFields(input),
+          lastSeenAt: observedAt,
+          status: "ONLINE",
+        },
+        include: hostStateInclude,
+      })
+      const record = mapPrismaHostState(nextState)
+      const auditEntry = hostStateSyncAuditEntry(input, record)
+      await tx.auditLog.create({
+        data: {
+          actorId: auditEntry.actorUserId,
+          action: auditEntry.action,
+          targetType: auditEntry.targetType,
+          targetId: auditEntry.targetId,
+          teamId: auditEntry.teamId,
+          metadata: auditEntry.metadata as Prisma.InputJsonValue | undefined,
+        },
+      })
+      return nextState
     })
     return mapPrismaHostState(state)
-  }
-
-  async recordAudit(entry: AdminAuditEntry): Promise<void> {
-    this.assertDatabaseConfigured()
-    await this.prisma.auditLog.create({
-      data: {
-        actorId: entry.actorUserId,
-        action: entry.action,
-        targetType: entry.targetType,
-        targetId: entry.targetId,
-        teamId: entry.teamId,
-        metadata: entry.metadata as Prisma.InputJsonValue | undefined,
-      },
-    })
   }
 
   private assertDatabaseConfigured(): void {
@@ -299,45 +331,34 @@ export async function syncEndpointHostState(
   endpointId: string,
   options: HostStateSyncOptions = {}
 ): Promise<HostStateRecord> {
+  assertHasAnyHostSyncPermission(actor)
+  const endpointTarget = await store.getEndpointForHostStateSyncAuth(endpointId)
+  if (!endpointTarget) {
+    throw new HostStateEndpointNotFoundError()
+  }
+  assertCanSyncHostState(actor, endpointTarget.team.id)
+  assertEndpointCanSync(endpointTarget)
+
   const endpoint = await store.getEndpointForHostStateSync(endpointId)
   if (!endpoint) {
     throw new HostStateEndpointNotFoundError()
   }
-  assertCanSyncHostState(actor, endpoint.team.id)
-  if (endpoint.status === "ARCHIVED") {
-    throw new HostStateEndpointArchivedError()
-  }
+  assertEndpointCanSync(endpoint)
 
   const report = normalizeAgentStateReport(await fetchAgentStateReport(endpoint, options))
-  const existing = await store.getHostStateByEndpointId(endpoint.id)
-  if (existing && existing.agent.id !== report.agent.id) {
-    throw new HostStateAgentConflictError()
-  }
-
   const observedAt = (options.now?.() ?? new Date()).toISOString()
-  const state = await store.upsertHostState({
+  return store.syncHostState({
     endpoint,
     ...report,
     observedAt,
-  })
-
-  await recordAdminAudit(store, {
     actorUserId: actor.id,
-    action: "host_state.sync",
-    targetType: "host_state",
-    targetId: state.id,
-    teamId: endpoint.team.id,
-    metadata: {
-      endpointId: endpoint.id,
-      endpointName: endpoint.name,
-      agentId: state.agent.id,
-      status: state.status,
-      incusAvailable: state.incus.available,
-      stateSchemaVersion: state.agent.stateSchemaVersion,
-    },
   })
+}
 
-  return state
+function assertEndpointCanSync(endpoint: HostStateEndpointSummary): void {
+  if (endpoint.status === "ARCHIVED" || endpoint.team.status === "ARCHIVED") {
+    throw new HostStateEndpointArchivedError()
+  }
 }
 
 export function toBrowserHostState(state: HostStateRecord): BrowserHostState {
@@ -364,14 +385,18 @@ async function fetchAgentStateReport(
   options: HostStateSyncOptions
 ): Promise<unknown> {
   const env = options.env ?? process.env
+  const requestTimeoutMs = parseRequestTimeout(env.ANVIL_AGENT_REQUEST_TIMEOUT_MS)
   const client = (options.createAgentClient ?? ((clientOptions) => new AgentClient(clientOptions)))({
     url: endpoint.url,
     token: endpoint.tokenCiphertext ? decryptEndpointToken(env, endpoint.tokenCiphertext) : undefined,
-    requestTimeoutMs: parseRequestTimeout(env.ANVIL_AGENT_REQUEST_TIMEOUT_MS),
+    requestTimeoutMs,
   })
 
   try {
-    const response = await client.execute({ method: "GET", path: "/agent/v1/state" })
+    const response = await withAgentRequestTimeout(
+      client.execute({ method: "GET", path: "/agent/v1/state" }),
+      requestTimeoutMs
+    )
     if (response.status < 200 || response.status >= 300) {
       throw new HostStateMalformedReportError()
     }
@@ -390,6 +415,24 @@ async function fetchAgentStateReport(
     throw error
   } finally {
     client.close?.()
+  }
+}
+
+async function withAgentRequestTimeout<T>(operation: Promise<T>, requestTimeoutMs: number): Promise<T> {
+  let timeout: NodeJS.Timeout | undefined
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<T>((_, reject) => {
+        timeout = setTimeout(() => {
+          reject(new AgentTimeoutError(`Agent request timed out after ${requestTimeoutMs}ms`))
+        }, requestTimeoutMs)
+      }),
+    ])
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout)
+    }
   }
 }
 
@@ -412,7 +455,7 @@ function normalizeAgentSummary(value: unknown): HostStateAgentSummary {
   return {
     id: requiredString(candidate.id),
     version: requiredString(candidate.version),
-    stateSchemaVersion: requiredInteger(candidate.stateSchemaVersion),
+    stateSchemaVersion: requiredPositiveInteger(candidate.stateSchemaVersion),
     startedAt: requiredDateString(candidate.startedAt),
     reportedAt: requiredDateString(candidate.reportedAt),
   }
@@ -431,7 +474,7 @@ function normalizeIncusSummary(value: unknown): HostStateIncusSummary {
   const candidate = objectValue(value)
   return {
     available: requiredBoolean(candidate.available),
-    statusCode: requiredInteger(candidate.statusCode),
+    statusCode: requiredHttpStatusCode(candidate.statusCode),
     serverVersion: optionalString(candidate.serverVersion),
     apiVersion: optionalString(candidate.apiVersion),
   }
@@ -451,9 +494,9 @@ function normalizeCapabilitySummary(value: unknown): HostStateCapabilitySummary 
 function normalizeSnapshotSummary(value: unknown): HostStateSnapshotSummary {
   const candidate = objectValue(value)
   return {
-    instancesTotal: requiredInteger(candidate.instancesTotal),
-    imagesTotal: requiredInteger(candidate.imagesTotal),
-    operationsTotal: requiredInteger(candidate.operationsTotal),
+    instancesTotal: requiredNonNegativeInteger(candidate.instancesTotal),
+    imagesTotal: requiredNonNegativeInteger(candidate.imagesTotal),
+    operationsTotal: requiredNonNegativeInteger(candidate.operationsTotal),
   }
 }
 
@@ -479,10 +522,34 @@ function optionalString(value: unknown): string | undefined {
 }
 
 function requiredInteger(value: unknown): number {
-  if (!Number.isInteger(value)) {
+  if (!Number.isInteger(value) || (value as number) > maxPostgresInteger) {
     throw new HostStateMalformedReportError()
   }
   return value as number
+}
+
+function requiredPositiveInteger(value: unknown): number {
+  const integer = requiredInteger(value)
+  if (integer < 1) {
+    throw new HostStateMalformedReportError()
+  }
+  return integer
+}
+
+function requiredNonNegativeInteger(value: unknown): number {
+  const integer = requiredInteger(value)
+  if (integer < 0) {
+    throw new HostStateMalformedReportError()
+  }
+  return integer
+}
+
+function requiredHttpStatusCode(value: unknown): number {
+  const integer = requiredInteger(value)
+  if (integer < 100 || integer > 599) {
+    throw new HostStateMalformedReportError()
+  }
+  return integer
 }
 
 function requiredBoolean(value: unknown): boolean {
@@ -505,6 +572,16 @@ function assertHasAnyHostReadPermission(actor: AdminPrincipal): void {
   if (
     canPerformGlobalAction(actor, "hosts:read") ||
     actor.teams.some((team) => canPerformTeamAction(actor, team.id, "hosts:read"))
+  ) {
+    return
+  }
+  throw new HostStatePermissionDeniedError()
+}
+
+function assertHasAnyHostSyncPermission(actor: AdminPrincipal): void {
+  if (
+    canPerformGlobalAction(actor, "hosts:sync") ||
+    actor.teams.some((team) => canPerformTeamAction(actor, team.id, "hosts:sync"))
   ) {
     return
   }
@@ -560,6 +637,27 @@ function hostStatePersistenceFields(input: HostStateUpsertInput) {
   }
 }
 
+function hostStateSyncAuditEntry(
+  input: HostStateSyncCommitInput,
+  state: HostStateRecord
+): AdminAuditEntry {
+  return {
+    actorUserId: input.actorUserId,
+    action: "host_state.sync",
+    targetType: "host_state",
+    targetId: state.id,
+    teamId: input.endpoint.team.id,
+    metadata: {
+      endpointId: input.endpoint.id,
+      endpointName: input.endpoint.name,
+      agentId: state.agent.id,
+      status: state.status,
+      incusAvailable: state.incus.available,
+      stateSchemaVersion: state.agent.stateSchemaVersion,
+    },
+  }
+}
+
 const hostStateInclude = {
   endpoint: {
     include: {
@@ -574,8 +672,26 @@ const hostStateInclude = {
   },
 } as const
 
-type PrismaHostStateClient = Pick<PrismaClient, "agentEndpoint" | "auditLog" | "hostState">
+type PrismaHostStateClient = Pick<PrismaClient, "agentEndpoint" | "hostState" | "$transaction">
 type PrismaHostStateWithEndpoint = Prisma.HostStateGetPayload<{ include: typeof hostStateInclude }>
+
+function mapPrismaEndpointSummary(endpoint: {
+  id: string
+  name: string
+  status: HostStateEndpointStatus
+  team: {
+    id: string
+    name: string
+    status: HostStateTeamStatus
+  }
+}): HostStateEndpointSummary {
+  return {
+    id: endpoint.id,
+    name: endpoint.name,
+    status: endpoint.status,
+    team: endpoint.team,
+  }
+}
 
 function mapPrismaEndpointForSync(endpoint: {
   id: string

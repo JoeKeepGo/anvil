@@ -13,12 +13,14 @@ import type {
   AdminPrincipal,
   CreateBootstrapAdminRecord,
 } from "../../services/admin/session"
-import type {
-  HostStateAgentClient,
-  HostStateRecord,
-  HostStateStore,
-  HostStateSyncEndpoint,
-  HostStateUpsertInput,
+import {
+  HostStateAgentConflictError,
+  type HostStateAgentClient,
+  type HostStateRecord,
+  type HostStateStore,
+  type HostStateSyncCommitInput,
+  type HostStateSyncEndpoint,
+  type HostStateUpsertInput,
 } from "../../services/admin/hostState"
 
 const sessionSecret = "test-session-secret-with-enough-entropy"
@@ -137,6 +139,7 @@ describe("admin host routes", () => {
     })
 
     assert.equal(response.status, 403)
+    assert.equal(hostStore.credentialLoads, 0)
     assert.deepEqual(agent.calls, [])
     assert.deepEqual(await readJson(response), {
       error: {
@@ -263,6 +266,7 @@ class TestHostRouteStore implements HostStateStore {
   private readonly statesByEndpoint = new Map<string, HostStateRecord>()
   private nextHostStateNumber = 1
   readonly auditEntries: AdminAuditEntry[] = []
+  credentialLoads = 0
 
   async listHostStates(): Promise<HostStateRecord[]> {
     return [...this.statesByEndpoint.values()]
@@ -272,15 +276,53 @@ class TestHostRouteStore implements HostStateStore {
     return [...this.statesByEndpoint.values()].find((state) => state.id === hostStateId) ?? null
   }
 
-  async getEndpointForHostStateSync(endpointId: string): Promise<HostStateSyncEndpoint | null> {
+  async getEndpointForHostStateSyncAuth(endpointId: string): Promise<HostStateSyncEndpoint | null> {
     return this.endpoints.get(endpointId) ?? null
   }
 
-  async getHostStateByEndpointId(endpointId: string): Promise<HostStateRecord | null> {
-    return this.statesByEndpoint.get(endpointId) ?? null
+  async getEndpointForHostStateSync(endpointId: string): Promise<HostStateSyncEndpoint | null> {
+    this.credentialLoads++
+    return this.endpoints.get(endpointId) ?? null
   }
 
-  async upsertHostState(input: HostStateUpsertInput): Promise<HostStateRecord> {
+  async syncHostState(input: HostStateSyncCommitInput): Promise<HostStateRecord> {
+    const existing = this.statesByEndpoint.get(input.endpoint.id)
+    if (existing && existing.agent.id !== input.agent.id) {
+      throw new HostStateAgentConflictError()
+    }
+    const state = this.writeHostState(input)
+    this.auditEntries.push(hostStateAuditEntry(input, state))
+    return state
+  }
+
+  async recordAudit(entry: AdminAuditEntry): Promise<void> {
+    this.auditEntries.push(entry)
+  }
+
+  addEndpoint(endpoint: HostStateSyncEndpoint): void {
+    this.endpoints.set(endpoint.id, endpoint)
+  }
+
+  async seedHostState(overrides: { agentId?: string } = {}): Promise<HostStateRecord> {
+    this.addEndpoint(activeEndpoint())
+    return this.writeHostState({
+      endpoint: activeEndpoint(),
+      agent: {
+        id: overrides.agentId ?? "11111111-1111-4111-8111-111111111111",
+        version: "dev",
+        stateSchemaVersion: 1,
+        startedAt: "2026-06-22T00:00:00.000Z",
+        reportedAt: "2026-06-22T00:30:00.000Z",
+      },
+      host: { hostname: "anvil-local-vm", os: "linux", arch: "arm64" },
+      incus: { available: true, statusCode: 200, serverVersion: "6.12", apiVersion: "1.0" },
+      capabilities: { incusProxy: true, events: true, stateReport: true, wireGuard: false, vmLifecycle: false },
+      snapshot: { instancesTotal: 0, imagesTotal: 1, operationsTotal: 0 },
+      observedAt: "2026-06-22T01:00:00.000Z",
+    })
+  }
+
+  private writeHostState(input: HostStateUpsertInput): HostStateRecord {
     const existing = this.statesByEndpoint.get(input.endpoint.id)
     const record: HostStateRecord = {
       id: existing?.id ?? `host-state-${this.nextHostStateNumber++}`,
@@ -301,33 +343,6 @@ class TestHostRouteStore implements HostStateStore {
     }
     this.statesByEndpoint.set(input.endpoint.id, record)
     return record
-  }
-
-  async recordAudit(entry: AdminAuditEntry): Promise<void> {
-    this.auditEntries.push(entry)
-  }
-
-  addEndpoint(endpoint: HostStateSyncEndpoint): void {
-    this.endpoints.set(endpoint.id, endpoint)
-  }
-
-  async seedHostState(overrides: { agentId?: string } = {}): Promise<HostStateRecord> {
-    this.addEndpoint(activeEndpoint())
-    return this.upsertHostState({
-      endpoint: activeEndpoint(),
-      agent: {
-        id: overrides.agentId ?? "11111111-1111-4111-8111-111111111111",
-        version: "dev",
-        stateSchemaVersion: 1,
-        startedAt: "2026-06-22T00:00:00.000Z",
-        reportedAt: "2026-06-22T00:30:00.000Z",
-      },
-      host: { hostname: "anvil-local-vm", os: "linux", arch: "arm64" },
-      incus: { available: true, statusCode: 200, serverVersion: "6.12", apiVersion: "1.0" },
-      capabilities: { incusProxy: true, events: true, stateReport: true, wireGuard: false, vmLifecycle: false },
-      snapshot: { instancesTotal: 0, imagesTotal: 1, operationsTotal: 0 },
-      observedAt: "2026-06-22T01:00:00.000Z",
-    })
   }
 }
 
@@ -409,6 +424,24 @@ function stateReport(overrides: { agentId?: string } = {}) {
     incus: { available: true, statusCode: 200, serverVersion: "6.12", apiVersion: "1.0" },
     capabilities: { incusProxy: true, events: true, stateReport: true, wireGuard: false, vmLifecycle: false },
     snapshot: { instancesTotal: 0, imagesTotal: 1, operationsTotal: 0 },
+  }
+}
+
+function hostStateAuditEntry(input: HostStateSyncCommitInput, state: HostStateRecord): AdminAuditEntry {
+  return {
+    actorUserId: input.actorUserId,
+    action: "host_state.sync",
+    targetType: "host_state",
+    targetId: state.id,
+    teamId: input.endpoint.team.id,
+    metadata: {
+      endpointId: input.endpoint.id,
+      endpointName: input.endpoint.name,
+      agentId: state.agent.id,
+      status: state.status,
+      incusAvailable: state.incus.available,
+      stateSchemaVersion: state.agent.stateSchemaVersion,
+    },
   }
 }
 
