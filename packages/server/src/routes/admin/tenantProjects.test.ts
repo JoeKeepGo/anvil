@@ -451,6 +451,152 @@ describe("admin tenant/project routes", () => {
       },
     })
   })
+
+  test("rejects archiving an active tenant default project without writing audit", async () => {
+    const store = new TestTenantProjectRouteStore()
+    const tenant = await seedTenant(store, "Default Tenant", "default-tenant")
+    const routes = createProjectRoutes({
+      env: { ANVIL_SESSION_SECRET: sessionSecret },
+      sessionStore: new TestSessionStore(globalAdmin),
+      tenantProjectStore: store,
+    })
+    const auditActionsBefore = store.auditActions()
+
+    const response = await routes.request(`/${tenant.defaultProject.id}/archive`, {
+      method: "POST",
+      headers: { cookie: sessionCookie(globalAdmin) },
+    })
+
+    assert.equal(response.status, 409)
+    assert.deepEqual(await readJson(response), {
+      error: {
+        code: "DEFAULT_PROJECT_INVARIANT",
+        message: "Active tenant default projects must remain active with an active owner participation.",
+        details: {},
+      },
+    })
+    assert.equal(store.projects.find((project) => project.id === tenant.defaultProject.id)?.status, "ACTIVE")
+    assert.deepEqual(store.auditActions(), auditActionsBefore)
+  })
+
+  test("rejects demoting an active tenant default project owner without writing audit", async () => {
+    const store = new TestTenantProjectRouteStore()
+    const tenant = await seedTenant(store, "Owner Tenant", "owner-tenant")
+    const routes = createProjectRoutes({
+      env: { ANVIL_SESSION_SECRET: sessionSecret },
+      sessionStore: new TestSessionStore(globalAdmin),
+      tenantProjectStore: store,
+    })
+    const auditActionsBefore = store.auditActions()
+
+    const response = await routes.request(`/${tenant.defaultProject.id}/tenants/${tenant.tenant.id}`, {
+      method: "PATCH",
+      headers: jsonHeaders(sessionCookie(globalAdmin)),
+      body: JSON.stringify({ role: "PARTICIPANT" }),
+    })
+
+    assert.equal(response.status, 409)
+    assert.deepEqual(await readJson(response), {
+      error: {
+        code: "DEFAULT_PROJECT_INVARIANT",
+        message: "Active tenant default projects must remain active with an active owner participation.",
+        details: {},
+      },
+    })
+    assert.deepEqual(
+      store.projectTenants.find(
+        (participation) =>
+          participation.projectId === tenant.defaultProject.id && participation.tenantId === tenant.tenant.id
+      ),
+      {
+        id: "project-tenant-1",
+        projectId: tenant.defaultProject.id,
+        tenantId: tenant.tenant.id,
+        role: "OWNER",
+        status: "ACTIVE",
+      }
+    )
+    assert.deepEqual(store.auditActions(), auditActionsBefore)
+  })
+
+  test("rejects re-adding an active tenant default project owner as participant without writing audit", async () => {
+    const store = new TestTenantProjectRouteStore()
+    const tenant = await seedTenant(store, "Readd Tenant", "readd-tenant")
+    const routes = createProjectRoutes({
+      env: { ANVIL_SESSION_SECRET: sessionSecret },
+      sessionStore: new TestSessionStore(globalAdmin),
+      tenantProjectStore: store,
+    })
+    const auditActionsBefore = store.auditActions()
+
+    const response = await routes.request(`/${tenant.defaultProject.id}/tenants`, {
+      method: "POST",
+      headers: jsonHeaders(sessionCookie(globalAdmin)),
+      body: JSON.stringify({ tenantId: tenant.tenant.id, role: "PARTICIPANT" }),
+    })
+
+    assert.equal(response.status, 409)
+    assert.deepEqual(await readJson(response), {
+      error: {
+        code: "DEFAULT_PROJECT_INVARIANT",
+        message: "Active tenant default projects must remain active with an active owner participation.",
+        details: {},
+      },
+    })
+    assert.deepEqual(
+      store.projectTenants.find(
+        (participation) =>
+          participation.projectId === tenant.defaultProject.id && participation.tenantId === tenant.tenant.id
+      ),
+      {
+        id: "project-tenant-1",
+        projectId: tenant.defaultProject.id,
+        tenantId: tenant.tenant.id,
+        role: "OWNER",
+        status: "ACTIVE",
+      }
+    )
+    assert.deepEqual(store.auditActions(), auditActionsBefore)
+  })
+
+  test("rejects removing an active tenant default project owner without writing audit", async () => {
+    const store = new TestTenantProjectRouteStore()
+    const tenant = await seedTenant(store, "Remove Tenant", "remove-tenant")
+    const routes = createProjectRoutes({
+      env: { ANVIL_SESSION_SECRET: sessionSecret },
+      sessionStore: new TestSessionStore(globalAdmin),
+      tenantProjectStore: store,
+    })
+    const auditActionsBefore = store.auditActions()
+
+    const response = await routes.request(`/${tenant.defaultProject.id}/tenants/${tenant.tenant.id}/remove`, {
+      method: "POST",
+      headers: { cookie: sessionCookie(globalAdmin) },
+    })
+
+    assert.equal(response.status, 409)
+    assert.deepEqual(await readJson(response), {
+      error: {
+        code: "DEFAULT_PROJECT_INVARIANT",
+        message: "Active tenant default projects must remain active with an active owner participation.",
+        details: {},
+      },
+    })
+    assert.deepEqual(
+      store.projectTenants.find(
+        (participation) =>
+          participation.projectId === tenant.defaultProject.id && participation.tenantId === tenant.tenant.id
+      ),
+      {
+        id: "project-tenant-1",
+        projectId: tenant.defaultProject.id,
+        tenantId: tenant.tenant.id,
+        role: "OWNER",
+        status: "ACTIVE",
+      }
+    )
+    assert.deepEqual(store.auditActions(), auditActionsBefore)
+  })
 })
 
 class TestSessionStore implements AdminDataStore {

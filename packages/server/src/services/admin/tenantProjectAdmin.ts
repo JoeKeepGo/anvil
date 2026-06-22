@@ -71,6 +71,13 @@ export interface AdminProjectDetail {
   endpointBindings: ManagedEndpointProjectBinding[]
 }
 
+export class DefaultProjectInvariantError extends Error {
+  constructor(message = "Active tenant default projects must remain active with an active owner participation.") {
+    super(message)
+    this.name = "DefaultProjectInvariantError"
+  }
+}
+
 export async function listAdminTenants(
   store: AdminTenantProjectAdminStore,
   actor: AdminPrincipal
@@ -239,6 +246,7 @@ export async function archiveAdminProject(
 ): Promise<ManagedProject> {
   assertGlobalTenantProjectAction(actor, "projects:write")
   await getExistingProject(store, projectId)
+  await assertProjectIsNotActiveTenantDefault(store, projectId)
   const project = await store.updateProjectRecord(projectId, { status: "ARCHIVED" })
   await recordAdminAudit(store, {
     actorUserId: actor.id,
@@ -280,6 +288,7 @@ export async function updateProjectTenantParticipation(
   if (!existing) {
     throw new ProjectTenantMismatchError()
   }
+  await assertDefaultProjectOwnerChangeAllowed(store, input.projectId, input.tenantId, input.role)
   const participation = await store.upsertProjectTenantRecord({
     projectId: input.projectId,
     tenantId: input.tenantId,
@@ -309,6 +318,7 @@ export async function removeProjectTenantParticipation(
   if (!existing) {
     throw new ProjectTenantMismatchError()
   }
+  await assertDefaultProjectOwnerRemovalAllowed(store, projectId, tenantId)
   const participation = await store.upsertProjectTenantRecord({
     projectId,
     tenantId,
@@ -330,6 +340,8 @@ export async function addAdminTenantToProject(
   actor: AdminPrincipal,
   input: { projectId: string; tenantId: string; role: ManagedProjectTenantRole }
 ): Promise<ManagedProjectTenant> {
+  assertGlobalTenantProjectAction(actor, "projects:write")
+  await assertDefaultProjectOwnerChangeAllowed(store, input.projectId, input.tenantId, input.role)
   return addTenantToProject(store, actor, input)
 }
 
@@ -711,6 +723,47 @@ async function getActiveEndpoint(
     throw new ArchivedEndpointForBindingError()
   }
   return endpoint
+}
+
+async function assertProjectIsNotActiveTenantDefault(
+  store: AdminTenantProjectAdminStore,
+  projectId: string
+): Promise<void> {
+  const tenants = await store.listTenantRecords()
+  if (tenants.some((tenant) => tenant.status === "ACTIVE" && tenant.defaultProjectId === projectId)) {
+    throw new DefaultProjectInvariantError()
+  }
+}
+
+async function assertDefaultProjectOwnerChangeAllowed(
+  store: AdminTenantProjectAdminStore,
+  projectId: string,
+  tenantId: string,
+  role: ManagedProjectTenantRole
+): Promise<void> {
+  if (role === "OWNER") {
+    return
+  }
+  await assertDefaultProjectOwnerMutationAllowed(store, projectId, tenantId)
+}
+
+async function assertDefaultProjectOwnerRemovalAllowed(
+  store: AdminTenantProjectAdminStore,
+  projectId: string,
+  tenantId: string
+): Promise<void> {
+  await assertDefaultProjectOwnerMutationAllowed(store, projectId, tenantId)
+}
+
+async function assertDefaultProjectOwnerMutationAllowed(
+  store: AdminTenantProjectAdminStore,
+  projectId: string,
+  tenantId: string
+): Promise<void> {
+  const tenant = await store.getTenant(tenantId)
+  if (tenant?.status === "ACTIVE" && tenant.defaultProjectId === projectId) {
+    throw new DefaultProjectInvariantError()
+  }
 }
 
 function assertGlobalTenantProjectAction(

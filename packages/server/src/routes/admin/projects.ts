@@ -13,6 +13,7 @@ import {
   ArchivedEndpointForBindingError,
   ArchivedProjectError,
   ArchivedTenantError,
+  DefaultProjectInvariantError,
   DuplicateProjectSlugError,
   EndpointNotFoundForBindingError,
   InvalidQuotaValueError,
@@ -335,6 +336,18 @@ function mapProjectRouteError(c: Context, error: unknown): Response {
   }
   if (error instanceof ArchivedProjectError) {
     return c.json({ error: { code: "PROJECT_ARCHIVED", message: "Project is archived.", details: {} } }, 409)
+  }
+  if (error instanceof DefaultProjectInvariantError) {
+    return c.json(
+      {
+        error: {
+          code: "DEFAULT_PROJECT_INVARIANT",
+          message: "Active tenant default projects must remain active with an active owner participation.",
+          details: {},
+        },
+      },
+      409
+    )
   }
   if (error instanceof InvalidQuotaValueError) {
     return c.json(
