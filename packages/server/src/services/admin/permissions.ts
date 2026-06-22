@@ -27,6 +27,8 @@ export const globalAdminActions: GlobalAction[] = [
   "quotas:read",
   "quotas:write",
   "resources:read",
+  "hosts:read",
+  "hosts:sync",
 ]
 
 export const teamOwnerActions: TeamAction[] = [
@@ -35,10 +37,19 @@ export const teamOwnerActions: TeamAction[] = [
   "endpoints:read",
   "endpoints:write",
   "audit:read",
+  "hosts:read",
+  "hosts:sync",
 ]
 
-const teamMaintainerActions: TeamAction[] = ["members:read", "endpoints:read", "endpoints:write", "audit:read"]
-const teamViewerActions: TeamAction[] = ["members:read", "endpoints:read", "audit:read"]
+const teamMaintainerActions: TeamAction[] = [
+  "members:read",
+  "endpoints:read",
+  "endpoints:write",
+  "audit:read",
+  "hosts:read",
+  "hosts:sync",
+]
+const teamViewerActions: TeamAction[] = ["members:read", "endpoints:read", "audit:read", "hosts:read"]
 const activeTenantActions: TenantAction[] = ["tenants:read", "projects:read", "resources:read"]
 const activeProjectActions: ProjectAction[] = ["projects:read", "quotas:read", "resources:read"]
 

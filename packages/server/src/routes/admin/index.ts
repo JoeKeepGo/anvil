@@ -2,6 +2,7 @@ import { Hono } from "hono"
 import { createAuditRoutes } from "./audit"
 import { createBootstrapRoutes } from "./bootstrap"
 import { createEndpointRoutes } from "./endpoints"
+import { createEndpointAgentStateSyncRoutes, createHostRoutes } from "./hosts"
 import { createPermissionRoutes } from "./permissions"
 import { createProjectRoutes } from "./projects"
 import { createTeamRoutes } from "./teams"
@@ -20,6 +21,11 @@ export function createAdminRoutes(options: AdminRoutesOptions) {
   routes.route("/audit", createAuditRoutes())
   routes.route("/", createBootstrapRoutes(options))
   routes.route("/endpoints", createEndpointRoutes())
+  routes.route(
+    "/endpoints",
+    createEndpointAgentStateSyncRoutes({ env: options.env, sessionStore: options.store })
+  )
+  routes.route("/hosts", createHostRoutes({ env: options.env, sessionStore: options.store }))
   routes.route("/permissions", createPermissionRoutes())
   routes.route("/projects", createProjectRoutes())
   routes.route("/teams", createTeamRoutes())

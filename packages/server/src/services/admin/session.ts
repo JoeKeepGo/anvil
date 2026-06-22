@@ -28,6 +28,8 @@ export type GlobalAction =
   | "quotas:read"
   | "quotas:write"
   | "resources:read"
+  | "hosts:read"
+  | "hosts:sync"
 
 export type TeamAction =
   | "members:read"
@@ -35,6 +37,8 @@ export type TeamAction =
   | "endpoints:read"
   | "endpoints:write"
   | "audit:read"
+  | "hosts:read"
+  | "hosts:sync"
 
 export type TenantAction = "tenants:read" | "projects:read" | "resources:read"
 export type ProjectAction = "projects:read" | "quotas:read" | "resources:read"

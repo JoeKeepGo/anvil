@@ -186,7 +186,7 @@ describe("admin database session service", () => {
         teams: [
           {
             teamId: "team-1",
-            actions: ["members:read", "endpoints:read", "audit:read"],
+            actions: ["members:read", "endpoints:read", "audit:read", "hosts:read"],
           },
         ],
       },

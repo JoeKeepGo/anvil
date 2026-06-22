@@ -46,9 +46,15 @@ describe("admin permission evaluator", () => {
       ],
     })
     assert.equal(canPerformGlobalAction(principal, "users:write"), true)
+    assert.equal(canPerformGlobalAction(principal, "hosts:read"), true)
+    assert.equal(canPerformGlobalAction(principal, "hosts:sync"), true)
     assert.equal(access.globalActions.includes("users:write"), true)
+    assert.equal(access.globalActions.includes("hosts:read"), true)
+    assert.equal(access.globalActions.includes("hosts:sync"), true)
     assert.equal(canPerformTeamAction(principal, "team-1", "endpoints:write"), true)
+    assert.equal(canPerformTeamAction(principal, "team-1", "hosts:sync"), true)
     assert.equal(access.teams[0]?.actions.includes("endpoints:write"), true)
+    assert.equal(access.teams[0]?.actions.includes("hosts:read"), true)
   })
 
   test("derives active tenant and project capability scopes without leaking archived scopes", () => {
@@ -170,11 +176,11 @@ describe("admin permission evaluator", () => {
         },
         {
           role: "MAINTAINER",
-          actions: ["members:read", "endpoints:read", "endpoints:write", "audit:read"],
+          actions: ["members:read", "endpoints:read", "endpoints:write", "audit:read", "hosts:read", "hosts:sync"],
         },
         {
           role: "VIEWER",
-          actions: ["members:read", "endpoints:read", "audit:read"],
+          actions: ["members:read", "endpoints:read", "audit:read", "hosts:read"],
         },
       ],
       tenant: [
