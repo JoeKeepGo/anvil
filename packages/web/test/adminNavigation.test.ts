@@ -70,6 +70,16 @@ describe("M11 admin hosts navigation", () => {
       )
     }
   })
+
+  test("does not fetch host state before hosts:read capability is available", () => {
+    const readCheckIndex = adminHostsSource.indexOf("const canRead")
+    const hostFetchIndex = adminHostsSource.indexOf("useApi(fetchAdminHosts")
+
+    assert.notEqual(readCheckIndex, -1)
+    assert.notEqual(hostFetchIndex, -1)
+    assert.equal(readCheckIndex < hostFetchIndex, true)
+    assert.match(adminHostsSource, /useApi\(fetchAdminHosts,\s*\{\s*enabled:\s*canRead\s*\}\)/)
+  })
 })
 
 function readSource(relativePath: string): string {
