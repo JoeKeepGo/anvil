@@ -14,6 +14,7 @@ import {
   ShieldCheck,
   Users,
   UsersRound,
+  Waypoints,
 } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
 import { cn } from "@/lib/utils"
@@ -48,6 +49,12 @@ const adminNavItems: AdminNavItem[] = [
     label: "Hosts",
     enabled: (access: AdminAccessSummary) =>
       hasAnyGlobalAction(access, ["hosts:read"]) || hasAnyTeamAction(access, "hosts:read"),
+  },
+  {
+    to: "/admin/network",
+    icon: Waypoints,
+    label: "Network",
+    enabled: (access: AdminAccessSummary) => hasAnyGlobalAction(access, ["network:read"]),
   },
   {
     to: "/admin/tenants",
