@@ -34,7 +34,7 @@ describe("admin router scaffold", () => {
       env: { ANVIL_SESSION_SECRET: "test-session-secret-with-enough-entropy" },
     })
 
-    for (const path of ["/endpoints", "/permissions/matrix", "/audit", "/hosts"]) {
+    for (const path of ["/endpoints", "/permissions/matrix", "/audit", "/hosts", "/network/fabrics", "/network/project-pools"]) {
       const response = await routes.request(path)
 
       assert.equal(response.status, 401, `${path} should be mounted as a protected Phase 4 route`)
