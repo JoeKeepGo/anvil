@@ -29,6 +29,9 @@ export const globalAdminActions: GlobalAction[] = [
   "resources:read",
   "hosts:read",
   "hosts:sync",
+  "network:read",
+  "network:write",
+  "network:apply",
 ]
 
 export const teamOwnerActions: TeamAction[] = [

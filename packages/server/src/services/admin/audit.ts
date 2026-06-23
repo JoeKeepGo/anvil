@@ -129,6 +129,13 @@ const sensitiveMetadataKeys = new Set([
   "session",
   "sessionSecret",
   "token",
+  "privateKey",
+  "privateKeyCiphertext",
+  "presharedKey",
+  "presharedKeyCiphertext",
+  "endpointToken",
+  "networkSecretKey",
+  "wireGuardPrivateKey",
 ])
 
 export async function recordAdminAudit(

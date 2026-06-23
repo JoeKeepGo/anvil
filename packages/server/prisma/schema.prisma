@@ -8,17 +8,18 @@ generator client {
 }
 
 model User {
-  id              String           @id @default(uuid())
-  email           String           @unique
-  passwordHash    String
-  name            String
-  status          UserStatus       @default(ACTIVE)
-  globalRole      GlobalRole       @default(MEMBER)
-  memberships     TeamMembership[]
-  auditLogs       AuditLog[]       @relation("AuditActor")
-  targetAuditLogs AuditLog[]       @relation("AuditTargetUser")
-  createdAt       DateTime         @default(now())
-  updatedAt       DateTime         @updatedAt
+  id                     String                  @id @default(uuid())
+  email                  String                  @unique
+  passwordHash           String
+  name                   String
+  status                 UserStatus              @default(ACTIVE)
+  globalRole             GlobalRole              @default(MEMBER)
+  memberships            TeamMembership[]
+  auditLogs              AuditLog[]              @relation("AuditActor")
+  targetAuditLogs        AuditLog[]              @relation("AuditTargetUser")
+  networkApplyOperations NetworkApplyOperation[]
+  createdAt              DateTime                @default(now())
+  updatedAt              DateTime                @updatedAt
 }
 
 model Team {
@@ -58,6 +59,7 @@ model AgentEndpoint {
   hostState          HostState?
   projectBindings    EndpointProjectBinding[]
   resourceOwnerships ResourceOwnership[]
+  hostNetworkPeers   HostNetworkPeer[]
   createdAt          DateTime                 @default(now())
   updatedAt          DateTime                 @updatedAt
 
@@ -65,18 +67,18 @@ model AgentEndpoint {
 }
 
 model AuditLog {
-  id         String   @id @default(uuid())
-  actorId    String
-  actor      User     @relation("AuditActor", fields: [actorId], references: [id])
-  targetType String
-  targetId   String
+  id           String   @id @default(uuid())
+  actorId      String
+  actor        User     @relation("AuditActor", fields: [actorId], references: [id])
+  targetType   String
+  targetId     String
   targetUserId String?
-  targetUser User?    @relation("AuditTargetUser", fields: [targetUserId], references: [id])
-  teamId     String?
-  team       Team?    @relation(fields: [teamId], references: [id])
-  action     String
-  metadata   Json?
-  createdAt  DateTime @default(now())
+  targetUser   User?    @relation("AuditTargetUser", fields: [targetUserId], references: [id])
+  teamId       String?
+  team         Team?    @relation(fields: [teamId], references: [id])
+  action       String
+  metadata     Json?
+  createdAt    DateTime @default(now())
 
   @@index([actorId])
   @@index([targetType, targetId])
@@ -113,6 +115,7 @@ model Project {
   tenantQuotas       ProjectTenantQuota[]
   endpointBindings   EndpointProjectBinding[]
   resourceOwnerships ResourceOwnership[]
+  networkPools       ProjectNetworkPool[]
   createdAt          DateTime                 @default(now())
   updatedAt          DateTime                 @updatedAt
 
@@ -122,17 +125,17 @@ model Project {
 }
 
 model ProjectTenant {
-  id                 String               @id @default(uuid())
+  id                 String              @id @default(uuid())
   projectId          String
-  project            Project              @relation(fields: [projectId], references: [id])
+  project            Project             @relation(fields: [projectId], references: [id])
   tenantId           String
-  tenant             Tenant               @relation(fields: [tenantId], references: [id])
+  tenant             Tenant              @relation(fields: [tenantId], references: [id])
   role               ProjectTenantRole
-  status             ProjectTenantStatus  @default(ACTIVE)
+  status             ProjectTenantStatus @default(ACTIVE)
   quotaAllocation    ProjectTenantQuota?
   resourceOwnerships ResourceOwnership[]
-  createdAt          DateTime             @default(now())
-  updatedAt          DateTime             @updatedAt
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
 
   @@unique([projectId, tenantId])
   @@index([tenantId])
@@ -153,16 +156,16 @@ model ProjectQuota {
 model ProjectTenantQuota {
   projectId        String
   projectTenant    ProjectTenant @relation(fields: [projectId, tenantId], references: [projectId, tenantId])
-  project          Project  @relation(fields: [projectId], references: [id])
+  project          Project       @relation(fields: [projectId], references: [id])
   tenantId         String
-  tenant           Tenant   @relation(fields: [tenantId], references: [id])
+  tenant           Tenant        @relation(fields: [tenantId], references: [id])
   maxVcpu          Int?
   maxMemoryBytes   BigInt?
   maxDiskBytes     BigInt?
   maxInstances     Int?
   maxIpv6Addresses Int?
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
 
   @@id([projectId, tenantId])
   @@index([tenantId])
@@ -189,16 +192,16 @@ model ResourceOwnership {
   resourceId             String
   endpointId             String
   endpointProjectBinding EndpointProjectBinding @relation(fields: [endpointId, projectId], references: [endpointId, projectId])
-  projectTenant         ProjectTenant          @relation(fields: [projectId, tenantId], references: [projectId, tenantId])
-  endpoint              AgentEndpoint          @relation(fields: [endpointId], references: [id])
-  projectId             String
-  project               Project                @relation(fields: [projectId], references: [id])
-  tenantId              String
-  tenant                Tenant                 @relation(fields: [tenantId], references: [id])
-  discoveredName        String?
-  externalFingerprint   String?
-  createdAt             DateTime               @default(now())
-  updatedAt             DateTime               @updatedAt
+  projectTenant          ProjectTenant          @relation(fields: [projectId, tenantId], references: [projectId, tenantId])
+  endpoint               AgentEndpoint          @relation(fields: [endpointId], references: [id])
+  projectId              String
+  project                Project                @relation(fields: [projectId], references: [id])
+  tenantId               String
+  tenant                 Tenant                 @relation(fields: [tenantId], references: [id])
+  discoveredName         String?
+  externalFingerprint    String?
+  createdAt              DateTime               @default(now())
+  updatedAt              DateTime               @updatedAt
 
   @@unique([resourceType, endpointId, resourceId])
   @@index([projectId])
@@ -303,4 +306,203 @@ enum ResourceType {
 
 enum HostStateStatus {
   ONLINE
+}
+
+// M12 Phase 2: Anvil-managed WireGuard/VPC network foundation.
+// Fabrics, hubs, host peers, prefixes, project pools, and apply operations.
+// WireGuard private keys and preshared keys are stored only as ciphertext.
+// Browser-safe serialization never exposes private keys or preshared keys.
+
+model NetworkFabric {
+  id              String               @id @default(uuid())
+  name            String
+  slug            String               @unique
+  status          NetworkFabricStatus  @default(PLANNED)
+  mode            NetworkFabricMode    @default(HUB_SPOKE)
+  overlayIpv4Cidr String
+  overlayIpv6Cidr String
+  hubs            WireGuardHub[]
+  peers           HostNetworkPeer[]
+  prefixes        FabricPrefix[]
+  pools           ProjectNetworkPool[]
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+
+  @@index([status])
+}
+
+model WireGuardHub {
+  id                   String                  @id @default(uuid())
+  fabricId             String
+  fabric               NetworkFabric           @relation(fields: [fabricId], references: [id])
+  name                 String
+  status               WireGuardHubStatus      @default(PLANNED)
+  listenPort           Int
+  endpointHost         String
+  publicKey            String                  @unique
+  privateKeyCiphertext String
+  presharedKeyMode     NetworkPresharedKeyMode @default(DISABLED)
+  createdAt            DateTime                @default(now())
+  updatedAt            DateTime                @updatedAt
+
+  @@unique([fabricId, name])
+  @@index([fabricId])
+  @@index([status])
+}
+
+model HostNetworkPeer {
+  id                     String                @id @default(uuid())
+  fabricId               String
+  fabric                 NetworkFabric         @relation(fields: [fabricId], references: [id])
+  endpointId             String?
+  endpoint               AgentEndpoint?        @relation(fields: [endpointId], references: [id], onDelete: SetNull)
+  name                   String
+  status                 HostNetworkPeerStatus @default(PLANNED)
+  role                   HostNetworkPeerRole   @default(MEMBER)
+  publicKey              String                @unique
+  privateKeyCiphertext   String
+  presharedKeyCiphertext String?
+  overlayIpv4Address     String?
+  overlayIpv6Address     String?
+  ownedPrefixes          FabricPrefix[]
+  createdAt              DateTime              @default(now())
+  updatedAt              DateTime              @updatedAt
+
+  @@unique([fabricId, name])
+  @@index([fabricId])
+  @@index([endpointId])
+  @@index([status])
+}
+
+model FabricPrefix {
+  id          String             @id @default(uuid())
+  fabricId    String
+  fabric      NetworkFabric      @relation(fields: [fabricId], references: [id])
+  kind        FabricPrefixKind
+  cidr        String
+  family      Int
+  status      FabricPrefixStatus @default(ACTIVE)
+  ownerPeerId String?
+  ownerPeer   HostNetworkPeer?   @relation(fields: [ownerPeerId], references: [id], onDelete: SetNull)
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+
+  @@unique([fabricId, cidr])
+  @@index([fabricId])
+  @@index([ownerPeerId])
+  @@index([status])
+}
+
+model ProjectNetworkPool {
+  id             String                    @id @default(uuid())
+  projectId      String
+  project        Project                   @relation(fields: [projectId], references: [id])
+  fabricId       String
+  fabric         NetworkFabric             @relation(fields: [fabricId], references: [id])
+  ipv4Cidr       String?
+  ipv6Cidr       String?
+  status         ProjectNetworkPoolStatus  @default(ACTIVE)
+  allocationMode NetworkPoolAllocationMode @default(STATIC)
+  createdAt      DateTime                  @default(now())
+  updatedAt      DateTime                  @updatedAt
+
+  @@unique([projectId, fabricId])
+  @@index([projectId])
+  @@index([fabricId])
+  @@index([status])
+}
+
+model NetworkApplyOperation {
+  id                String                 @id @default(uuid())
+  targetType        NetworkApplyTargetType
+  targetId          String
+  mode              NetworkApplyMode
+  status            NetworkApplyStatus     @default(PENDING)
+  requestedByUserId String
+  requestedByUser   User                   @relation(fields: [requestedByUserId], references: [id])
+  summary           String?
+  errorSummary      String?
+  createdAt         DateTime               @default(now())
+  updatedAt         DateTime               @updatedAt
+
+  @@index([targetType, targetId])
+  @@index([requestedByUserId])
+  @@index([status])
+}
+
+enum NetworkFabricStatus {
+  PLANNED
+  ACTIVE
+  ARCHIVED
+}
+
+enum NetworkFabricMode {
+  HUB_SPOKE
+  MESH
+}
+
+enum WireGuardHubStatus {
+  PLANNED
+  ACTIVE
+  ARCHIVED
+}
+
+enum NetworkPresharedKeyMode {
+  DISABLED
+  PAIRWISE
+  FABRIC
+}
+
+enum HostNetworkPeerStatus {
+  PLANNED
+  ACTIVE
+  ARCHIVED
+}
+
+enum HostNetworkPeerRole {
+  MEMBER
+  RELAY
+}
+
+enum FabricPrefixKind {
+  SUBNET
+  ROUTE
+  RESERVED
+}
+
+enum FabricPrefixStatus {
+  ACTIVE
+  ARCHIVED
+}
+
+enum ProjectNetworkPoolStatus {
+  ACTIVE
+  ARCHIVED
+}
+
+enum NetworkPoolAllocationMode {
+  STATIC
+  DYNAMIC
+  RESERVED
+}
+
+enum NetworkApplyTargetType {
+  FABRIC
+  HUB
+  PEER
+  PREFIX
+  POOL
+}
+
+enum NetworkApplyMode {
+  DRY_RUN
+  APPLY
+}
+
+enum NetworkApplyStatus {
+  PENDING
+  RUNNING
+  SUCCEEDED
+  FAILED
+  CANCELLED
 }

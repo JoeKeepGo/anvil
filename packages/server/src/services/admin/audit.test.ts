@@ -268,3 +268,53 @@ class TestAuditQueryStore implements AdminAuditQueryStore {
     this.entries.push(entry)
   }
 }
+
+describe("network audit redaction", () => {
+  test("redacts network secret material while preserving apply action identity", async () => {
+    const store = new TestAdminStore()
+
+    await recordAdminAudit(store, {
+      actorUserId: "admin-1",
+      action: "network.apply",
+      targetType: "network_apply",
+      targetId: "apply-1",
+      metadata: {
+        targetType: "network_hub",
+        targetId: "hub-1",
+        mode: "APPLY",
+        status: "SUCCEEDED",
+        privateKey: "wireguard-private-key-that-must-not-leak",
+        presharedKey: "wireguard-preshared-key-that-must-not-leak",
+        privateKeyCiphertext: "v1:private-ciphertext-envelope",
+        presharedKeyCiphertext: "v1:preshared-ciphertext-envelope",
+        endpointToken: "endpoint-token-that-must-not-leak",
+        networkSecretKey: "network-secret-key-that-must-not-leak",
+        summary: "applied anvilwg0 hub config",
+      },
+    })
+
+    const entry = store.auditEntries[0]
+    assert.ok(entry)
+    assert.equal(entry.action, "network.apply")
+    assert.equal(entry.targetType, "network_apply")
+    assert.equal(entry.metadata?.targetType, "network_hub")
+    assert.equal(entry.metadata?.targetId, "hub-1")
+    assert.equal(entry.metadata?.mode, "APPLY")
+    assert.equal(entry.metadata?.status, "SUCCEEDED")
+    assert.equal(entry.metadata?.summary, "applied anvilwg0 hub config")
+    assert.equal(entry.metadata?.privateKey, "[REDACTED]")
+    assert.equal(entry.metadata?.presharedKey, "[REDACTED]")
+    assert.equal(entry.metadata?.privateKeyCiphertext, "[REDACTED]")
+    assert.equal(entry.metadata?.presharedKeyCiphertext, "[REDACTED]")
+    assert.equal(entry.metadata?.endpointToken, "[REDACTED]")
+    assert.equal(entry.metadata?.networkSecretKey, "[REDACTED]")
+
+    const serialized = JSON.stringify(store.auditEntries)
+    assert.equal(serialized.includes("wireguard-private-key-that-must-not-leak"), false)
+    assert.equal(serialized.includes("wireguard-preshared-key-that-must-not-leak"), false)
+    assert.equal(serialized.includes("v1:private-ciphertext-envelope"), false)
+    assert.equal(serialized.includes("v1:preshared-ciphertext-envelope"), false)
+    assert.equal(serialized.includes("endpoint-token-that-must-not-leak"), false)
+    assert.equal(serialized.includes("network-secret-key-that-must-not-leak"), false)
+  })
+})
