@@ -268,3 +268,214 @@ class TestAuditQueryStore implements AdminAuditQueryStore {
     this.entries.push(entry)
   }
 }
+
+describe("network audit redaction", () => {
+  test("redacts network secret material while preserving apply action identity", async () => {
+    const store = new TestAdminStore()
+
+    await recordAdminAudit(store, {
+      actorUserId: "admin-1",
+      action: "network.apply",
+      targetType: "network_apply",
+      targetId: "apply-1",
+      metadata: {
+        targetType: "network_hub",
+        targetId: "hub-1",
+        mode: "APPLY",
+        status: "SUCCEEDED",
+        privateKey: "wireguard-private-key-that-must-not-leak",
+        presharedKey: "wireguard-preshared-key-that-must-not-leak",
+        privateKeyCiphertext: "v1:private-ciphertext-envelope",
+        presharedKeyCiphertext: "v1:preshared-ciphertext-envelope",
+        endpointToken: "endpoint-token-that-must-not-leak",
+        networkSecretKey: "network-secret-key-that-must-not-leak",
+        summary: "applied anvilwg0 hub config",
+      },
+    })
+
+    const entry = store.auditEntries[0]
+    assert.ok(entry)
+    assert.equal(entry.action, "network.apply")
+    assert.equal(entry.targetType, "network_apply")
+    assert.equal(entry.metadata?.targetType, "network_hub")
+    assert.equal(entry.metadata?.targetId, "hub-1")
+    assert.equal(entry.metadata?.mode, "APPLY")
+    assert.equal(entry.metadata?.status, "SUCCEEDED")
+    assert.equal(entry.metadata?.summary, "applied anvilwg0 hub config")
+    assert.equal(entry.metadata?.privateKey, "[REDACTED]")
+    assert.equal(entry.metadata?.presharedKey, "[REDACTED]")
+    assert.equal(entry.metadata?.privateKeyCiphertext, "[REDACTED]")
+    assert.equal(entry.metadata?.presharedKeyCiphertext, "[REDACTED]")
+    assert.equal(entry.metadata?.endpointToken, "[REDACTED]")
+    assert.equal(entry.metadata?.networkSecretKey, "[REDACTED]")
+
+    const serialized = JSON.stringify(store.auditEntries)
+    assert.equal(serialized.includes("wireguard-private-key-that-must-not-leak"), false)
+    assert.equal(serialized.includes("wireguard-preshared-key-that-must-not-leak"), false)
+    assert.equal(serialized.includes("v1:private-ciphertext-envelope"), false)
+    assert.equal(serialized.includes("v1:preshared-ciphertext-envelope"), false)
+    assert.equal(serialized.includes("endpoint-token-that-must-not-leak"), false)
+    assert.equal(serialized.includes("network-secret-key-that-must-not-leak"), false)
+  })
+})
+
+describe("network audit redaction completeness", () => {
+  test("recordAdminAudit redacts generic ciphertext/cookie/sessionData/auth keys and nested occurrences", async () => {
+    const store = new TestAdminStore()
+
+    await recordAdminAudit(store, {
+      actorUserId: "admin-1",
+      action: "network.peer.create",
+      targetType: "network_peer",
+      targetId: "peer-1",
+      metadata: {
+        targetType: "network_peer",
+        targetId: "peer-1",
+        mode: "DRY_RUN",
+        status: "SUCCEEDED",
+        summary: "rendered config for anvilwg0",
+        ciphertext: "v1:raw-ciphertext-envelope-that-must-not-leak",
+        privateKeyCiphertext: "v1:private-ciphertext-envelope-that-must-not-leak",
+        presharedKeyCiphertext: "v1:preshared-ciphertext-envelope-that-must-not-leak",
+        cookie: "anvil_session=cookie-value-that-must-not-leak",
+        cookies: "anvil_session=cookies-value-that-must-not-leak",
+        sessionData: "session-data-that-must-not-leak",
+        endpointToken: "endpoint-token-that-must-not-leak",
+        authorization: "Bearer auth-value-that-must-not-leak",
+        Ciphertext: "v1:cased-ciphertext-that-must-not-leak",
+        nested: {
+          ciphertext: "v1:nested-ciphertext-that-must-not-leak",
+          cookie: "nested-cookie-that-must-not-leak",
+          sessionData: "nested-session-data-that-must-not-leak",
+          authorization: "Bearer nested-auth-that-must-not-leak",
+          endpointToken: "nested-endpoint-token-that-must-not-leak",
+        },
+      },
+    })
+
+    const entry = store.auditEntries[0]
+    assert.ok(entry)
+    assert.equal(entry.action, "network.peer.create")
+    assert.equal(entry.targetType, "network_peer")
+
+    // Action identity metadata must survive redaction.
+    assert.equal(entry.metadata?.targetType, "network_peer")
+    assert.equal(entry.metadata?.targetId, "peer-1")
+    assert.equal(entry.metadata?.mode, "DRY_RUN")
+    assert.equal(entry.metadata?.status, "SUCCEEDED")
+    assert.equal(entry.metadata?.summary, "rendered config for anvilwg0")
+
+    // Secret material must be redacted.
+    assert.equal(entry.metadata?.ciphertext, "[REDACTED]")
+    assert.equal(entry.metadata?.privateKeyCiphertext, "[REDACTED]")
+    assert.equal(entry.metadata?.presharedKeyCiphertext, "[REDACTED]")
+    assert.equal(entry.metadata?.cookie, "[REDACTED]")
+    assert.equal(entry.metadata?.cookies, "[REDACTED]")
+    assert.equal(entry.metadata?.sessionData, "[REDACTED]")
+    assert.equal(entry.metadata?.endpointToken, "[REDACTED]")
+    assert.equal(entry.metadata?.authorization, "[REDACTED]")
+    assert.equal(entry.metadata?.Ciphertext, "[REDACTED]")
+    assert.equal((entry.metadata?.nested as Record<string, unknown> | undefined)?.ciphertext, "[REDACTED]")
+    assert.equal((entry.metadata?.nested as Record<string, unknown> | undefined)?.cookie, "[REDACTED]")
+    assert.equal((entry.metadata?.nested as Record<string, unknown> | undefined)?.sessionData, "[REDACTED]")
+    assert.equal((entry.metadata?.nested as Record<string, unknown> | undefined)?.authorization, "[REDACTED]")
+    assert.equal((entry.metadata?.nested as Record<string, unknown> | undefined)?.endpointToken, "[REDACTED]")
+
+    const serialized = JSON.stringify(store.auditEntries)
+    assert.equal(serialized.includes("raw-ciphertext-envelope-that-must-not-leak"), false)
+    assert.equal(serialized.includes("private-ciphertext-envelope-that-must-not-leak"), false)
+    assert.equal(serialized.includes("preshared-ciphertext-envelope-that-must-not-leak"), false)
+    assert.equal(serialized.includes("cookie-value-that-must-not-leak"), false)
+    assert.equal(serialized.includes("cookies-value-that-must-not-leak"), false)
+    assert.equal(serialized.includes("session-data-that-must-not-leak"), false)
+    assert.equal(serialized.includes("endpoint-token-that-must-not-leak"), false)
+    assert.equal(serialized.includes("auth-value-that-must-not-leak"), false)
+    assert.equal(serialized.includes("cased-ciphertext-that-must-not-leak"), false)
+    assert.equal(serialized.includes("nested-ciphertext-that-must-not-leak"), false)
+    assert.equal(serialized.includes("nested-cookie-that-must-not-leak"), false)
+    assert.equal(serialized.includes("nested-session-data-that-must-not-leak"), false)
+    assert.equal(serialized.includes("Bearer nested-auth-that-must-not-leak"), false)
+    assert.equal(serialized.includes("nested-endpoint-token-that-must-not-leak"), false)
+  })
+
+  test("listAdminAuditEntries redacts the same secret keys before browser output", async () => {
+    const store = new TestAuditQueryStore()
+    store.addAuditEntry({
+      id: "audit-net-1",
+      actor: { id: "admin-1", email: "admin@example.com", name: "Admin User" },
+      action: "network.apply",
+      targetType: "network_apply",
+      targetId: "apply-1",
+      metadata: {
+        targetType: "network_hub",
+        targetId: "hub-1",
+        mode: "APPLY",
+        status: "SUCCEEDED",
+        summary: "applied anvilwg0 hub config",
+        ciphertext: "v1:list-ciphertext-that-must-not-leak",
+        privateKeyCiphertext: "v1:list-private-ciphertext-that-must-not-leak",
+        presharedKeyCiphertext: "v1:list-preshared-ciphertext-that-must-not-leak",
+        cookie: "list-cookie-that-must-not-leak",
+        cookies: "list-cookies-that-must-not-leak",
+        sessionData: "list-session-data-that-must-not-leak",
+        endpointToken: "list-endpoint-token-that-must-not-leak",
+        authorization: "Bearer list-auth-that-must-not-leak",
+        nested: {
+          ciphertext: "v1:list-nested-ciphertext-that-must-not-leak",
+          cookie: "list-nested-cookie-that-must-not-leak",
+          sessionData: "list-nested-session-data-that-must-not-leak",
+        },
+      },
+      createdAt: "2026-06-23T00:00:00.000Z",
+    })
+
+    const result = await listAdminAuditEntries(
+      store,
+      {
+        id: "admin-1",
+        email: "admin@example.com",
+        name: "Admin User",
+        status: "ACTIVE",
+        globalRole: "ADMIN",
+        teams: [],
+      },
+      { targetType: "network_apply" }
+    )
+
+    const entry = result.audit[0]
+    assert.ok(entry)
+    // Action identity survives.
+    assert.equal(entry.action, "network.apply")
+    assert.equal(entry.targetType, "network_apply")
+    assert.equal(entry.metadata?.targetType, "network_hub")
+    assert.equal(entry.metadata?.targetId, "hub-1")
+    assert.equal(entry.metadata?.mode, "APPLY")
+    assert.equal(entry.metadata?.status, "SUCCEEDED")
+    assert.equal(entry.metadata?.summary, "applied anvilwg0 hub config")
+    // Secret material redacted.
+    assert.equal(entry.metadata?.ciphertext, "[REDACTED]")
+    assert.equal(entry.metadata?.privateKeyCiphertext, "[REDACTED]")
+    assert.equal(entry.metadata?.presharedKeyCiphertext, "[REDACTED]")
+    assert.equal(entry.metadata?.cookie, "[REDACTED]")
+    assert.equal(entry.metadata?.cookies, "[REDACTED]")
+    assert.equal(entry.metadata?.sessionData, "[REDACTED]")
+    assert.equal(entry.metadata?.endpointToken, "[REDACTED]")
+    assert.equal(entry.metadata?.authorization, "[REDACTED]")
+    assert.equal((entry.metadata?.nested as Record<string, unknown> | undefined)?.ciphertext, "[REDACTED]")
+    assert.equal((entry.metadata?.nested as Record<string, unknown> | undefined)?.cookie, "[REDACTED]")
+    assert.equal((entry.metadata?.nested as Record<string, unknown> | undefined)?.sessionData, "[REDACTED]")
+
+    const serialized = JSON.stringify(result)
+    assert.equal(serialized.includes("list-ciphertext-that-must-not-leak"), false)
+    assert.equal(serialized.includes("list-private-ciphertext-that-must-not-leak"), false)
+    assert.equal(serialized.includes("list-preshared-ciphertext-that-must-not-leak"), false)
+    assert.equal(serialized.includes("list-cookie-that-must-not-leak"), false)
+    assert.equal(serialized.includes("list-cookies-that-must-not-leak"), false)
+    assert.equal(serialized.includes("list-session-data-that-must-not-leak"), false)
+    assert.equal(serialized.includes("list-endpoint-token-that-must-not-leak"), false)
+    assert.equal(serialized.includes("list-auth-that-must-not-leak"), false)
+    assert.equal(serialized.includes("list-nested-ciphertext-that-must-not-leak"), false)
+    assert.equal(serialized.includes("list-nested-cookie-that-must-not-leak"), false)
+    assert.equal(serialized.includes("list-nested-session-data-that-must-not-leak"), false)
+  })
+})

@@ -30,6 +30,9 @@ export type GlobalAction =
   | "resources:read"
   | "hosts:read"
   | "hosts:sync"
+  | "network:read"
+  | "network:write"
+  | "network:apply"
 
 export type TeamAction =
   | "members:read"

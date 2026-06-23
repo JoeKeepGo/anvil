@@ -123,13 +123,34 @@ const redactedValue = "[REDACTED]"
 const sensitiveMetadataKeys = new Set([
   "authorization",
   "password",
-  "passwordHash",
-  "privateConfig",
+  "passwordhash",
+  "privateconfig",
   "secret",
   "session",
-  "sessionSecret",
+  "sessionsecret",
+  "sessiondata",
+  "sessionid",
   "token",
+  "authtoken",
+  "accesstoken",
+  "refreshtoken",
+  "apikey",
+  "bearer",
+  "cookie",
+  "cookies",
+  "ciphertext",
+  "privatekey",
+  "privatekeyciphertext",
+  "presharedkey",
+  "presharedkeyciphertext",
+  "endpointtoken",
+  "networksecretkey",
+  "wireguardprivatekey",
 ])
+
+function isSensitiveMetadataKey(key: string): boolean {
+  return sensitiveMetadataKeys.has(key.toLowerCase())
+}
 
 export async function recordAdminAudit(
   store: AdminAuditStore,
@@ -195,7 +216,7 @@ function redactObject(value: Record<string, unknown>): Record<string, unknown> {
   return Object.fromEntries(
     Object.entries(value).map(([key, childValue]) => [
       key,
-      sensitiveMetadataKeys.has(key) ? redactedValue : redactValue(childValue),
+      isSensitiveMetadataKey(key) ? redactedValue : redactValue(childValue),
     ])
   )
 }

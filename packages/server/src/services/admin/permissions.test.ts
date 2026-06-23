@@ -201,3 +201,46 @@ describe("admin permission evaluator", () => {
     assert.equal(JSON.stringify(getPermissionMatrix()).includes("session"), false)
   })
 })
+
+describe("network permission actions", () => {
+  test("exposes network:read, network:write, and network:apply as global admin actions only", () => {
+    const principal: AdminPrincipal = {
+      id: "admin-1",
+      email: "admin@example.com",
+      name: "Admin User",
+      status: "ACTIVE",
+      globalRole: "ADMIN",
+      teams: [],
+    }
+    const member: AdminPrincipal = {
+      id: "member-1",
+      email: "member@example.com",
+      name: "Member User",
+      status: "ACTIVE",
+      globalRole: "MEMBER",
+      teams: [
+        { id: "team-1", name: "Primary Team", role: "OWNER", status: "ACTIVE" },
+      ],
+    }
+
+    assert.equal(canPerformGlobalAction(principal, "network:read"), true)
+    assert.equal(canPerformGlobalAction(principal, "network:write"), true)
+    assert.equal(canPerformGlobalAction(principal, "network:apply"), true)
+    assert.equal(globalAdminActions.includes("network:read"), true)
+    assert.equal(globalAdminActions.includes("network:write"), true)
+    assert.equal(globalAdminActions.includes("network:apply"), true)
+
+    // Network management is a global admin foundation concern in Phase 2.
+    // Team-scoped network action assignment is deferred to the API phase.
+    assert.equal(canPerformGlobalAction(member, "network:read"), false)
+    assert.equal(canPerformGlobalAction(member, "network:write"), false)
+    assert.equal(canPerformGlobalAction(member, "network:apply"), false)
+    assert.equal(teamOwnerActions.includes("network:read" as never), false)
+
+    const matrix = getPermissionMatrix()
+    const adminActions = matrix.global.find((entry) => entry.role === "ADMIN")?.actions ?? []
+    assert.equal(adminActions.includes("network:read"), true)
+    assert.equal(adminActions.includes("network:write"), true)
+    assert.equal(adminActions.includes("network:apply"), true)
+  })
+})
