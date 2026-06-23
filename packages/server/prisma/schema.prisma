@@ -49,19 +49,20 @@ model TeamMembership {
 }
 
 model AgentEndpoint {
-  id                 String                   @id @default(uuid())
-  name               String
-  url                String
-  tokenCiphertext    String?
-  status             EndpointStatus           @default(ACTIVE)
-  teamId             String
-  team               Team                     @relation(fields: [teamId], references: [id])
-  hostState          HostState?
-  projectBindings    EndpointProjectBinding[]
-  resourceOwnerships ResourceOwnership[]
-  hostNetworkPeers   HostNetworkPeer[]
-  createdAt          DateTime                 @default(now())
-  updatedAt          DateTime                 @updatedAt
+  id                    String                   @id @default(uuid())
+  name                  String
+  url                   String
+  tokenCiphertext       String?
+  status                EndpointStatus           @default(ACTIVE)
+  teamId                String
+  team                  Team                     @relation(fields: [teamId], references: [id])
+  hostState             HostState?
+  projectBindings       EndpointProjectBinding[]
+  resourceOwnerships    ResourceOwnership[]
+  hostNetworkPeers      HostNetworkPeer[]
+  networkStateSnapshots NetworkStateSnapshot[]
+  createdAt             DateTime                 @default(now())
+  updatedAt             DateTime                 @updatedAt
 
   @@unique([teamId, name])
 }
@@ -314,19 +315,20 @@ enum HostStateStatus {
 // Browser-safe serialization never exposes private keys or preshared keys.
 
 model NetworkFabric {
-  id              String               @id @default(uuid())
-  name            String
-  slug            String               @unique
-  status          NetworkFabricStatus  @default(PLANNED)
-  mode            NetworkFabricMode    @default(HUB_SPOKE)
-  overlayIpv4Cidr String
-  overlayIpv6Cidr String
-  hubs            WireGuardHub[]
-  peers           HostNetworkPeer[]
-  prefixes        FabricPrefix[]
-  pools           ProjectNetworkPool[]
-  createdAt       DateTime             @default(now())
-  updatedAt       DateTime             @updatedAt
+  id                    String                 @id @default(uuid())
+  name                  String
+  slug                  String                 @unique
+  status                NetworkFabricStatus    @default(PLANNED)
+  mode                  NetworkFabricMode      @default(HUB_SPOKE)
+  overlayIpv4Cidr       String
+  overlayIpv6Cidr       String
+  hubs                  WireGuardHub[]
+  peers                 HostNetworkPeer[]
+  prefixes              FabricPrefix[]
+  pools                 ProjectNetworkPool[]
+  createdAt             DateTime               @default(now())
+  updatedAt             DateTime               @updatedAt
+  networkStateSnapshots NetworkStateSnapshot[]
 
   @@index([status])
 }
@@ -505,4 +507,38 @@ enum NetworkApplyStatus {
   SUCCEEDED
   FAILED
   CANCELLED
+}
+
+// M12 Phase 4: latest observed network state snapshot per endpoint, pulled
+// from the trusted agent /agent/v1/network/state report. Browser-safe only;
+// it never stores WireGuard private keys or preshared keys.
+
+model NetworkStateSnapshot {
+  id                    String                     @id @default(uuid())
+  endpointId            String
+  endpoint              AgentEndpoint              @relation(fields: [endpointId], references: [id], onDelete: Restrict)
+  fabricId              String?
+  fabric                NetworkFabric?             @relation(fields: [fabricId], references: [id], onDelete: SetNull)
+  agentId               String
+  stateSchemaVersion    Int
+  observedAt            DateTime
+  wireGuardAvailable    Boolean
+  ipCommandAvailable    Boolean
+  iptablesAvailable     Boolean
+  ip6tablesAvailable    Boolean
+  ipv4Forwarding        Boolean
+  ipv6Forwarding        Boolean
+  managedInterfaceCount Int
+  status                NetworkStateSnapshotStatus @default(ONLINE)
+  createdAt             DateTime                   @default(now())
+  updatedAt             DateTime                   @updatedAt
+
+  @@unique([endpointId])
+  @@index([fabricId])
+}
+
+enum NetworkStateSnapshotStatus {
+  ONLINE
+  OFFLINE
+  ERROR
 }

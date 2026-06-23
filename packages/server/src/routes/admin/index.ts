@@ -3,6 +3,7 @@ import { createAuditRoutes } from "./audit"
 import { createBootstrapRoutes } from "./bootstrap"
 import { createEndpointRoutes } from "./endpoints"
 import { createEndpointAgentStateSyncRoutes, createHostRoutes } from "./hosts"
+import { createNetworkRoutes } from "./network"
 import { createPermissionRoutes } from "./permissions"
 import { createProjectRoutes } from "./projects"
 import { createTeamRoutes } from "./teams"
@@ -26,6 +27,7 @@ export function createAdminRoutes(options: AdminRoutesOptions) {
     createEndpointAgentStateSyncRoutes({ env: options.env, sessionStore: options.store })
   )
   routes.route("/hosts", createHostRoutes({ env: options.env, sessionStore: options.store }))
+  routes.route("/network", createNetworkRoutes({ env: options.env, sessionStore: options.store }))
   routes.route("/permissions", createPermissionRoutes())
   routes.route("/projects", createProjectRoutes())
   routes.route("/teams", createTeamRoutes())
