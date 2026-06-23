@@ -132,6 +132,9 @@ export type GlobalAction =
   | "resources:read"
   | "hosts:read"
   | "hosts:sync"
+  | "network:read"
+  | "network:write"
+  | "network:apply"
 
 export type TeamAction =
   | "members:read"
@@ -474,4 +477,161 @@ export interface ApiError {
   code: string
   message: string
   details: Record<string, unknown>
+}
+
+// M12 network console types. These mirror the browser-safe backend contract:
+// public keys and `*Configured` boolean flags only. WireGuard private keys and
+// preshared keys are server-side only and never appear in these shapes.
+export type NetworkFabricStatus = "PLANNED" | "ACTIVE" | "ARCHIVED"
+export type NetworkFabricMode = "HUB_SPOKE" | "MESH"
+export type WireGuardHubStatus = "PLANNED" | "ACTIVE" | "ARCHIVED"
+export type NetworkPresharedKeyMode = "DISABLED" | "PAIRWISE" | "FABRIC"
+export type HostNetworkPeerStatus = "PLANNED" | "ACTIVE" | "ARCHIVED"
+export type HostNetworkPeerRole = "MEMBER" | "RELAY"
+export type FabricPrefixKind = "SUBNET" | "ROUTE" | "RESERVED"
+export type FabricPrefixStatus = "ACTIVE" | "ARCHIVED"
+export type ProjectNetworkPoolStatus = "ACTIVE" | "ARCHIVED"
+export type NetworkPoolAllocationMode = "STATIC" | "DYNAMIC" | "RESERVED"
+export type NetworkApplyMode = "DRY_RUN" | "APPLY"
+export type NetworkApplyStatus =
+  | "PENDING"
+  | "RUNNING"
+  | "SUCCEEDED"
+  | "FAILED"
+  | "CANCELLED"
+
+export interface AdminNetworkFabric {
+  id: string
+  name: string
+  slug: string
+  status: NetworkFabricStatus
+  mode: NetworkFabricMode
+  overlayIpv4Cidr: string
+  overlayIpv6Cidr: string
+  hubCount: number
+  peerCount: number
+  prefixCount: number
+  poolCount: number
+  createdAt: string
+  updatedAt: string
+}
+
+export interface AdminWireGuardHub {
+  id: string
+  fabricId: string
+  name: string
+  status: WireGuardHubStatus
+  listenPort: number
+  endpointHost: string
+  publicKey: string
+  presharedKeyMode: NetworkPresharedKeyMode
+  privateKeyConfigured: boolean
+  createdAt: string
+  updatedAt: string
+}
+
+export interface AdminHostNetworkPeer {
+  id: string
+  fabricId: string
+  endpointId: string | null
+  name: string
+  status: HostNetworkPeerStatus
+  role: HostNetworkPeerRole
+  publicKey: string
+  privateKeyConfigured: boolean
+  presharedKeyConfigured: boolean
+  overlayIpv4Address: string | null
+  overlayIpv6Address: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface AdminFabricPrefix {
+  id: string
+  fabricId: string
+  kind: FabricPrefixKind
+  cidr: string
+  family: number
+  status: FabricPrefixStatus
+  ownerPeerId: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface AdminProjectNetworkPool {
+  id: string
+  projectId: string
+  fabricId: string
+  ipv4Cidr: string | null
+  ipv6Cidr: string | null
+  status: ProjectNetworkPoolStatus
+  allocationMode: NetworkPoolAllocationMode
+  createdAt: string
+  updatedAt: string
+}
+
+export interface AdminNetworkFabricDetail extends AdminNetworkFabric {
+  hubs: AdminWireGuardHub[]
+  peers: AdminHostNetworkPeer[]
+  prefixes: AdminFabricPrefix[]
+  pools: AdminProjectNetworkPool[]
+}
+
+export interface AdminNetworkFabricsResponse {
+  fabrics: AdminNetworkFabric[]
+}
+
+export interface AdminNetworkFabricResponse {
+  fabric: AdminNetworkFabricDetail
+}
+
+export interface AdminProjectNetworkPoolsResponse {
+  pools: AdminProjectNetworkPool[]
+}
+
+export interface AdminNetworkApplyEndpointResult {
+  endpointId: string
+  endpointName: string
+  status: "OK" | "FAILED" | "SKIPPED"
+  mode: NetworkApplyMode
+  summary?: string
+  error?: string
+}
+
+export interface AdminNetworkApplyResponse {
+  fabricId: string
+  operationId: string
+  mode: NetworkApplyMode
+  status: NetworkApplyStatus
+  endpoints: AdminNetworkApplyEndpointResult[]
+  summary: string
+}
+
+export interface AdminNetworkSyncEndpointResult {
+  endpointId: string
+  endpointName: string
+  status: "SYNCED" | "SKIPPED" | "FAILED"
+  snapshot?: AdminNetworkStateSnapshot
+  error?: string
+}
+
+export interface AdminNetworkStateSnapshot {
+  id: string
+  endpointId: string
+  fabricId: string | null
+  agentId: string
+  stateSchemaVersion: number
+  observedAt: string
+  wireGuardAvailable: boolean
+  ipCommandAvailable: boolean
+  iptablesAvailable: boolean
+  ip6tablesAvailable: boolean
+  forwarding: { ipv4: boolean; ipv6: boolean }
+  managedInterfaceCount: number
+  status: string
+}
+
+export interface AdminNetworkSyncResponse {
+  fabricId: string
+  endpoints: AdminNetworkSyncEndpointResult[]
 }

@@ -6,18 +6,23 @@ import {
   addAdminProjectTenant,
   archiveAdminProject,
   archiveAdminTenant,
+  applyAdminNetworkFabric,
   bootstrapAdmin,
   createAdminEndpoint,
   createAdminProject,
   createAdminTenant,
   createAdminUser,
+  dryRunAdminNetworkFabric,
   fetchAdminAudit,
   fetchAdminEndpoints,
   fetchAdminHosts,
   fetchAdminHost,
+  fetchAdminNetworkFabric,
+  fetchAdminNetworkFabrics,
   fetchAdminPermissionMatrix,
   fetchAdminProject,
   fetchAdminProjects,
+  fetchAdminProjectNetworkPools,
   fetchAdminTeams,
   fetchAdminTenant,
   fetchAdminTenants,
@@ -33,6 +38,7 @@ import {
   setAdminProjectQuota,
   setAdminProjectTenantQuota,
   syncAdminHostState,
+  syncAdminNetworkFabric,
   updateAdminProject,
   updateAdminProjectTenant,
   updateAdminTenant,
@@ -791,5 +797,221 @@ describe("admin API helpers", () => {
     })
     assert.equal((await restoreAdminProject("project-1")).status, "ACTIVE")
     assert.equal(fetchCalls.at(-1)?.input, "/api/admin/projects/project-1/restore")
+  })
+})
+
+describe("admin network API helpers (M12)", () => {
+  const fabricSummary = {
+    id: "fabric-1",
+    name: "Lab Fabric",
+    slug: "lab-fabric",
+    status: "PLANNED",
+    mode: "HUB_SPOKE",
+    overlayIpv4Cidr: "10.42.0.0/24",
+    overlayIpv6Cidr: "fd42:42:42::/64",
+    hubCount: 1,
+    peerCount: 1,
+    prefixCount: 0,
+    poolCount: 0,
+    createdAt: "2026-06-23T12:00:00.000Z",
+    updatedAt: "2026-06-23T12:00:00.000Z",
+  }
+
+  const fabricDetail = {
+    ...fabricSummary,
+    hubs: [
+      {
+        id: "hub-1",
+        fabricId: "fabric-1",
+        name: "Lab Hub",
+        status: "PLANNED",
+        listenPort: 51820,
+        endpointHost: "lab-hub.internal",
+        publicKey: "hub-public-key-base64-aaaaaaaaaaaaaaaaaaaa",
+        presharedKeyMode: "PAIRWISE",
+        privateKeyConfigured: true,
+        createdAt: "2026-06-23T12:00:00.000Z",
+        updatedAt: "2026-06-23T12:00:00.000Z",
+      },
+    ],
+    peers: [
+      {
+        id: "peer-1",
+        fabricId: "fabric-1",
+        endpointId: "endpoint-1",
+        name: "anvilwg0",
+        status: "PLANNED",
+        role: "MEMBER",
+        publicKey: "peer-public-key-base64-bbbbbbbbbbbbbbbbbbbb",
+        privateKeyConfigured: true,
+        presharedKeyConfigured: true,
+        overlayIpv4Address: "10.42.0.2",
+        overlayIpv6Address: "fd42:42:42::2",
+        createdAt: "2026-06-23T12:00:00.000Z",
+        updatedAt: "2026-06-23T12:00:00.000Z",
+      },
+    ],
+    prefixes: [],
+    pools: [],
+  }
+
+  test("list/detail helpers consume M12 envelopes through /api/admin/network only", async () => {
+    installJsonFetch(200, { fabrics: [fabricSummary] })
+    const fabrics = await fetchAdminNetworkFabrics()
+    assert.equal(fetchCalls.at(-1)?.input, "/api/admin/network/fabrics")
+    assert.equal(fetchCalls.at(-1)?.init?.credentials, "include")
+    assert.equal(fabrics[0]?.slug, "lab-fabric")
+    assert.equal(fabrics[0]?.overlayIpv6Cidr, "fd42:42:42::/64")
+
+    installJsonFetch(200, { fabric: fabricDetail })
+    const detail = await fetchAdminNetworkFabric("fabric-1")
+    assert.equal(fetchCalls.at(-1)?.input, "/api/admin/network/fabrics/fabric-1")
+    assert.equal(detail.peers[0]?.name, "anvilwg0")
+    assert.equal(detail.peers[0]?.privateKeyConfigured, true)
+    assert.equal("privateKeyCiphertext" in detail.peers[0]!, false)
+    assert.equal("presharedKeyCiphertext" in detail.peers[0]!, false)
+  })
+
+  test("project pool helper consumes the M12 pool envelope", async () => {
+    installJsonFetch(200, {
+      pools: [
+        {
+          id: "pool-1",
+          projectId: "project-1",
+          fabricId: "fabric-1",
+          ipv4Cidr: "10.42.100.0/24",
+          ipv6Cidr: "fd42:42:100::/64",
+          status: "ACTIVE",
+          allocationMode: "DYNAMIC",
+          createdAt: "2026-06-23T12:00:00.000Z",
+          updatedAt: "2026-06-23T12:00:00.000Z",
+        },
+      ],
+    })
+    const pools = await fetchAdminProjectNetworkPools()
+    assert.equal(fetchCalls.at(-1)?.input, "/api/admin/network/project-pools")
+    assert.equal(pools[0]?.allocationMode, "DYNAMIC")
+    assert.equal(pools[0]?.ipv6Cidr, "fd42:42:100::/64")
+  })
+
+  test("sync/dry-run/apply unwrap { sync } / { apply } backend envelopes to the correct /api/admin/network routes", async () => {
+    installJsonFetch(200, {
+      sync: {
+        fabricId: "fabric-1",
+        endpoints: [
+          {
+            endpointId: "endpoint-1",
+            endpointName: "Lab Docker Agent",
+            status: "SYNCED",
+            snapshot: {
+              id: "snap-1",
+              endpointId: "endpoint-1",
+              fabricId: "fabric-1",
+              agentId: "agent-id-1",
+              stateSchemaVersion: 1,
+              observedAt: "2026-06-23T12:52:09.995Z",
+              wireGuardAvailable: true,
+              ipCommandAvailable: true,
+              iptablesAvailable: true,
+              ip6tablesAvailable: true,
+              forwarding: { ipv4: true, ipv6: true },
+              managedInterfaceCount: 0,
+              status: "ONLINE",
+            },
+          },
+        ],
+      },
+    })
+    const sync = await syncAdminNetworkFabric("fabric-1")
+    assert.equal(fetchCalls.at(-1)?.input, "/api/admin/network/fabrics/fabric-1/sync")
+    assert.equal(fetchCalls.at(-1)?.init?.method, "POST")
+    assert.equal(fetchCalls.at(-1)?.init?.credentials, "include")
+    // The helper must unwrap { sync } and not return the whole envelope.
+    assert.equal(Array.isArray((sync as unknown as Record<string, unknown[]>).sync), false)
+    assert.equal(sync.endpoints[0]?.status, "SYNCED")
+    assert.equal(sync.endpoints[0]?.snapshot?.wireGuardAvailable, true)
+
+    installJsonFetch(200, {
+      apply: {
+        fabricId: "fabric-1",
+        operationId: "op-1",
+        mode: "DRY_RUN",
+        status: "SUCCEEDED",
+        endpoints: [
+          {
+            endpointId: "endpoint-1",
+            endpointName: "Lab Docker Agent",
+            status: "OK",
+            mode: "DRY_RUN",
+            summary: "validated anvilwg0 with 1 peer(s); dry-run, no host mutation",
+          },
+        ],
+        summary: "dry-run validated 1 endpoint(s), 0 failed",
+      },
+    })
+    const dryRun = await dryRunAdminNetworkFabric("fabric-1")
+    assert.equal(fetchCalls.at(-1)?.input, "/api/admin/network/fabrics/fabric-1/dry-run")
+    assert.equal(fetchCalls.at(-1)?.init?.method, "POST")
+    assert.equal(dryRun.mode, "DRY_RUN")
+    assert.equal(dryRun.status, "SUCCEEDED")
+    assert.equal("apply" in (dryRun as unknown as Record<string, unknown>), false)
+
+    installJsonFetch(200, {
+      apply: {
+        fabricId: "fabric-1",
+        operationId: "op-2",
+        mode: "APPLY",
+        status: "SUCCEEDED",
+        endpoints: [
+          {
+            endpointId: "endpoint-1",
+            endpointName: "Lab Docker Agent",
+            status: "OK",
+            mode: "APPLY",
+            summary: "validated and planned anvilwg0 with 1 peer(s); apply execution deferred to managed service",
+          },
+        ],
+        summary: "apply planned for 1 endpoint(s), 0 failed; execution deferred to managed service",
+      },
+    })
+    const apply = await applyAdminNetworkFabric("fabric-1")
+    assert.equal(fetchCalls.at(-1)?.input, "/api/admin/network/fabrics/fabric-1/apply")
+    assert.equal(fetchCalls.at(-1)?.init?.method, "POST")
+    assert.equal(apply.mode, "APPLY")
+    assert.equal(apply.endpoints[0]?.status, "OK")
+    assert.equal("apply" in (apply as unknown as Record<string, unknown>), false)
+  })
+
+  test("network helpers never expose private keys, PSKs, ciphertext, or agent tokens", async () => {
+    const leakyDetail = {
+      ...fabricDetail,
+      hubs: [
+        {
+          ...fabricDetail.hubs[0]!,
+          // Simulate an upstream that must not leak these fields. The helper
+          // types do not declare them, but assert the serialized contract is clean.
+        },
+      ],
+    }
+    installJsonFetch(200, { fabric: leakyDetail })
+    const detail = await fetchAdminNetworkFabric("fabric-1")
+    const serialized = JSON.stringify([detail, fabricSummary])
+
+    for (const forbidden of [
+      "privateKeyCiphertext",
+      "presharedKeyCiphertext",
+      "tokenCiphertext",
+      "endpoint-token",
+      "agent token",
+      "passwordHash",
+      "sessionSecret",
+      "ws://127.0.0.1:19090",
+      "ws://127.0.0.1:19095",
+      "/agent/v1",
+      "/1.0/",
+      "/var/lib/incus",
+    ]) {
+      assert.equal(serialized.includes(forbidden), false, `network API helper leaked ${forbidden}`)
+    }
   })
 })

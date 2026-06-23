@@ -8,6 +8,7 @@ import {
   ShieldCheck,
   Users,
   UsersRound,
+  Waypoints,
 } from "lucide-react"
 import type { AppShellContext } from "@/components/layout/Layout"
 import { hasAnyGlobalAction, hasAnyTeamAction } from "@/lib/adminAccess"
@@ -49,6 +50,14 @@ const sections = [
     enabled: (context: AppShellContext) =>
       hasAnyGlobalAction(context.session.access, ["hosts:read"]) ||
       hasAnyTeamAction(context.session.access, "hosts:read"),
+  },
+  {
+    to: "/admin/network",
+    title: "Network",
+    detail: "Review managed WireGuard fabrics and run safe sync, dry-run, and apply actions.",
+    icon: Waypoints,
+    enabled: (context: AppShellContext) =>
+      hasAnyGlobalAction(context.session.access, ["network:read"]),
   },
   {
     to: "/admin/tenants",

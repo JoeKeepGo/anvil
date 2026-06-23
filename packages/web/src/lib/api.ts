@@ -23,6 +23,14 @@ import type {
   CreateAdminUserInput,
   AdminHostState,
   AdminProjectDetail,
+  AdminNetworkApplyResponse,
+  AdminNetworkFabric,
+  AdminNetworkFabricDetail,
+  AdminNetworkFabricResponse,
+  AdminNetworkFabricsResponse,
+  AdminNetworkSyncResponse,
+  AdminProjectNetworkPool,
+  AdminProjectNetworkPoolsResponse,
   ManagedEndpoint,
   ManagedEndpointProjectBinding,
   ManagedProject,
@@ -473,6 +481,51 @@ function appendQuery(
   if (value !== undefined && value !== "") {
     searchParams.set(key, String(value))
   }
+}
+
+// Admin network (M12). Read/sync/dry-run/apply through Anvil /api only.
+// Browser code never calls Agent, Incus, WireGuard sockets, or tunnel URLs.
+export function fetchAdminNetworkFabrics(): Promise<AdminNetworkFabric[]> {
+  return apiFetch<AdminNetworkFabricsResponse>("/api/admin/network/fabrics").then(
+    (response) => response.fabrics
+  )
+}
+
+export function fetchAdminNetworkFabric(fabricId: string): Promise<AdminNetworkFabricDetail> {
+  return apiFetch<AdminNetworkFabricResponse>(
+    `/api/admin/network/fabrics/${encodeURIComponent(fabricId)}`
+  ).then((response) => response.fabric)
+}
+
+export function syncAdminNetworkFabric(fabricId: string): Promise<AdminNetworkSyncResponse> {
+  // Backend envelopes the sync result as { sync: AdminNetworkSyncResponse }.
+  return apiFetch<{ sync: AdminNetworkSyncResponse }>(
+    `/api/admin/network/fabrics/${encodeURIComponent(fabricId)}/sync`,
+    { method: "POST" }
+  ).then((response) => response.sync)
+}
+
+export function dryRunAdminNetworkFabric(fabricId: string): Promise<AdminNetworkApplyResponse> {
+  // The dry-run route shares the apply handler and envelopes the result as
+  // { apply: AdminNetworkApplyResponse } with mode "DRY_RUN".
+  return apiFetch<{ apply: AdminNetworkApplyResponse }>(
+    `/api/admin/network/fabrics/${encodeURIComponent(fabricId)}/dry-run`,
+    { method: "POST" }
+  ).then((response) => response.apply)
+}
+
+export function applyAdminNetworkFabric(fabricId: string): Promise<AdminNetworkApplyResponse> {
+  // Backend envelopes the apply result as { apply: AdminNetworkApplyResponse }.
+  return apiFetch<{ apply: AdminNetworkApplyResponse }>(
+    `/api/admin/network/fabrics/${encodeURIComponent(fabricId)}/apply`,
+    { method: "POST" }
+  ).then((response) => response.apply)
+}
+
+export function fetchAdminProjectNetworkPools(): Promise<AdminProjectNetworkPool[]> {
+  return apiFetch<AdminProjectNetworkPoolsResponse>("/api/admin/network/project-pools").then(
+    (response) => response.pools
+  )
 }
 
 export { ApiRequestError }
