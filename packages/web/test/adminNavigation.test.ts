@@ -103,7 +103,7 @@ describe("M12 admin network navigation", () => {
     assert.match(adminNetworkSource, /dryRunAdminNetworkFabric/)
     assert.match(adminNetworkSource, /applyAdminNetworkFabric/)
     assert.match(`${adminNetworkSource}\n${adminNetworkAccessSource}`, /network:apply/)
-    assert.match(`${adminNetworkSource}\n${adminNetworkAccessSource}`, /network:write/)
+    assert.match(`${adminNetworkSource}\n${adminNetworkAccessSource}`, /network:read/)
 
     for (const forbidden of [
       "tokenCiphertext",

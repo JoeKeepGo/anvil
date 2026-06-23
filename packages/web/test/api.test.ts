@@ -894,82 +894,92 @@ describe("admin network API helpers (M12)", () => {
     assert.equal(pools[0]?.ipv6Cidr, "fd42:42:100::/64")
   })
 
-  test("sync/dry-run/apply post to the correct /api/admin/network routes", async () => {
+  test("sync/dry-run/apply unwrap { sync } / { apply } backend envelopes to the correct /api/admin/network routes", async () => {
     installJsonFetch(200, {
-      fabricId: "fabric-1",
-      endpoints: [
-        {
-          endpointId: "endpoint-1",
-          endpointName: "Lab Docker Agent",
-          status: "SYNCED",
-          snapshot: {
-            id: "snap-1",
+      sync: {
+        fabricId: "fabric-1",
+        endpoints: [
+          {
             endpointId: "endpoint-1",
-            fabricId: "fabric-1",
-            agentId: "agent-id-1",
-            stateSchemaVersion: 1,
-            observedAt: "2026-06-23T12:52:09.995Z",
-            wireGuardAvailable: true,
-            ipCommandAvailable: true,
-            iptablesAvailable: true,
-            ip6tablesAvailable: true,
-            forwarding: { ipv4: true, ipv6: true },
-            managedInterfaceCount: 0,
-            status: "ONLINE",
+            endpointName: "Lab Docker Agent",
+            status: "SYNCED",
+            snapshot: {
+              id: "snap-1",
+              endpointId: "endpoint-1",
+              fabricId: "fabric-1",
+              agentId: "agent-id-1",
+              stateSchemaVersion: 1,
+              observedAt: "2026-06-23T12:52:09.995Z",
+              wireGuardAvailable: true,
+              ipCommandAvailable: true,
+              iptablesAvailable: true,
+              ip6tablesAvailable: true,
+              forwarding: { ipv4: true, ipv6: true },
+              managedInterfaceCount: 0,
+              status: "ONLINE",
+            },
           },
-        },
-      ],
+        ],
+      },
     })
     const sync = await syncAdminNetworkFabric("fabric-1")
     assert.equal(fetchCalls.at(-1)?.input, "/api/admin/network/fabrics/fabric-1/sync")
     assert.equal(fetchCalls.at(-1)?.init?.method, "POST")
     assert.equal(fetchCalls.at(-1)?.init?.credentials, "include")
+    // The helper must unwrap { sync } and not return the whole envelope.
+    assert.equal(Array.isArray((sync as unknown as Record<string, unknown[]>).sync), false)
     assert.equal(sync.endpoints[0]?.status, "SYNCED")
     assert.equal(sync.endpoints[0]?.snapshot?.wireGuardAvailable, true)
 
     installJsonFetch(200, {
-      fabricId: "fabric-1",
-      operationId: "op-1",
-      mode: "DRY_RUN",
-      status: "SUCCEEDED",
-      endpoints: [
-        {
-          endpointId: "endpoint-1",
-          endpointName: "Lab Docker Agent",
-          status: "OK",
-          mode: "DRY_RUN",
-          summary: "validated anvilwg0 with 1 peer(s); dry-run, no host mutation",
-        },
-      ],
-      summary: "dry-run validated 1 endpoint(s), 0 failed",
+      apply: {
+        fabricId: "fabric-1",
+        operationId: "op-1",
+        mode: "DRY_RUN",
+        status: "SUCCEEDED",
+        endpoints: [
+          {
+            endpointId: "endpoint-1",
+            endpointName: "Lab Docker Agent",
+            status: "OK",
+            mode: "DRY_RUN",
+            summary: "validated anvilwg0 with 1 peer(s); dry-run, no host mutation",
+          },
+        ],
+        summary: "dry-run validated 1 endpoint(s), 0 failed",
+      },
     })
     const dryRun = await dryRunAdminNetworkFabric("fabric-1")
     assert.equal(fetchCalls.at(-1)?.input, "/api/admin/network/fabrics/fabric-1/dry-run")
     assert.equal(fetchCalls.at(-1)?.init?.method, "POST")
     assert.equal(dryRun.mode, "DRY_RUN")
     assert.equal(dryRun.status, "SUCCEEDED")
+    assert.equal("apply" in (dryRun as unknown as Record<string, unknown>), false)
 
     installJsonFetch(200, {
-      fabricId: "fabric-1",
-      operationId: "op-2",
-      mode: "APPLY",
-      status: "SUCCEEDED",
-      endpoints: [
-        {
-          endpointId: "endpoint-1",
-          endpointName: "Lab Docker Agent",
-          status: "OK",
-          mode: "APPLY",
-          summary: "validated and planned anvilwg0 with 1 peer(s); apply execution deferred to managed service",
-        },
-      ],
-      summary: "apply planned for 1 endpoint(s), 0 failed; execution deferred to managed service",
+      apply: {
+        fabricId: "fabric-1",
+        operationId: "op-2",
+        mode: "APPLY",
+        status: "SUCCEEDED",
+        endpoints: [
+          {
+            endpointId: "endpoint-1",
+            endpointName: "Lab Docker Agent",
+            status: "OK",
+            mode: "APPLY",
+            summary: "validated and planned anvilwg0 with 1 peer(s); apply execution deferred to managed service",
+          },
+        ],
+        summary: "apply planned for 1 endpoint(s), 0 failed; execution deferred to managed service",
+      },
     })
     const apply = await applyAdminNetworkFabric("fabric-1")
     assert.equal(fetchCalls.at(-1)?.input, "/api/admin/network/fabrics/fabric-1/apply")
     assert.equal(fetchCalls.at(-1)?.init?.method, "POST")
     assert.equal(apply.mode, "APPLY")
     assert.equal(apply.endpoints[0]?.status, "OK")
+    assert.equal("apply" in (apply as unknown as Record<string, unknown>), false)
   })
 
   test("network helpers never expose private keys, PSKs, ciphertext, or agent tokens", async () => {
