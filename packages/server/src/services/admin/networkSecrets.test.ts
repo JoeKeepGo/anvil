@@ -83,3 +83,41 @@ describe("network secret encryption boundary", () => {
     assert.equal(isNetworkSecretConfigured(ciphertext), true)
   })
 })
+
+describe("network secret ciphertext error normalization", () => {
+  test("throws NetworkSecretCiphertextError for malformed-but-structured envelopes", () => {
+    // Structurally valid (v1 + 4 parts) but the decoded IV is the wrong length.
+    assert.throws(() => decryptNetworkSecret(env, "v1:a:b:c"), NetworkSecretCiphertextError)
+    // Valid-length IV but malformed tag.
+    assert.throws(
+      () => decryptNetworkSecret(env, "v1:AAAAAAAAAAAAAAAA:b:c"),
+      NetworkSecretCiphertextError
+    )
+    // Valid-length IV and tag placeholder but malformed ciphertext.
+    assert.throws(
+      () => decryptNetworkSecret(env, "v1:AAAAAAAAAAAAAAAA:AAAAAAAAAAAAAAAA:c"),
+      NetworkSecretCiphertextError
+    )
+  })
+
+  test("never leaks a raw crypto error type for invalid network secret ciphertext", () => {
+    const cases = ["v1:a:b:c", "v1:AAAAAAAAAAAAAAAA:b:c", "v1:AAAAAAAAAAAAAAAA:AAAAAAAAAAAAAAAA:c"]
+    for (const value of cases) {
+      try {
+        decryptNetworkSecret(env, value)
+        assert.fail(`expected ${value} to throw`)
+      } catch (error) {
+        assert.equal(error instanceof NetworkSecretCiphertextError, true)
+        assert.equal(error instanceof TypeError, false)
+        assert.equal(
+          String(error?.constructor?.name).includes("TypeError"),
+          false
+        )
+      }
+    }
+  })
+
+  test("still throws NetworkSecretKeyError when the key is missing for a structured envelope", () => {
+    assert.throws(() => decryptNetworkSecret({}, "v1:a:b:c"), NetworkSecretKeyError)
+  })
+})

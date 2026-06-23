@@ -50,14 +50,26 @@ export function decryptNetworkSecret(env: NodeJS.ProcessEnv, encryptedSecret: st
     throw new NetworkSecretCiphertextError()
   }
 
-  const decipher = createDecipheriv(algorithm, networkSecretKey(env), Buffer.from(iv, "base64url"))
-  decipher.setAuthTag(Buffer.from(tag, "base64url"))
+  // Resolve the key first so a missing/unconfigured key still surfaces as the
+  // dedicated key error rather than being masked as a ciphertext error.
+  const key = networkSecretKey(env)
+
   try {
-    return Buffer.concat([
-      decipher.update(Buffer.from(ciphertext, "base64url")),
-      decipher.final(),
-    ]).toString("utf8")
-  } catch {
+    const ivBuffer = Buffer.from(iv, "base64url")
+    const tagBuffer = Buffer.from(tag, "base64url")
+    const ciphertextBuffer = Buffer.from(ciphertext, "base64url")
+    if (ivBuffer.length !== ivByteLength) {
+      throw new NetworkSecretCiphertextError()
+    }
+    const decipher = createDecipheriv(algorithm, key, ivBuffer)
+    decipher.setAuthTag(tagBuffer)
+    return Buffer.concat([decipher.update(ciphertextBuffer), decipher.final()]).toString("utf8")
+  } catch (error) {
+    if (error instanceof NetworkSecretCiphertextError) {
+      throw error
+    }
+    // Raw crypto failures (invalid IV/tag/ciphertext, GCM auth mismatch, bad key)
+    // must surface as a single typed error so callers never see a leaked stack.
     throw new NetworkSecretCiphertextError()
   }
 }
