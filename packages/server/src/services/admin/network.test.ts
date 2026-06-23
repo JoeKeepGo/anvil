@@ -3,6 +3,7 @@ import { describe, test } from "node:test"
 import {
   NetworkAgentUnavailableError,
   NetworkDuplicateFabricSlugError,
+  NetworkDuplicatePeerAddressError,
   NetworkFabricArchivedError,
   NetworkFabricHasActiveChildrenError,
   NetworkFabricNotFoundError,
@@ -257,6 +258,28 @@ describe("network hub/peer/prefix/pool services and secret boundary", () => {
     )
   })
 
+  test("createPeer rejects duplicate overlay addresses within the fabric", async () => {
+    const store = new TestNetworkStore()
+    const fabric = await createFabric(store, globalAdmin, {
+      name: "F",
+      slug: "peer-dup-addr-fabric",
+      overlayIpv4Cidr: "10.20.0.0/16",
+      overlayIpv6Cidr: "fd00:dead:beef::/48",
+    })
+    await createPeer(store, globalAdmin, { fabricId: fabric.id, name: "anvilwg0", overlayIpv4Address: "10.20.0.2", overlayIpv6Address: "fd00:dead:beef::2" }, env)
+    await assert.rejects(
+      createPeer(store, globalAdmin, { fabricId: fabric.id, name: "anvilwg1", overlayIpv4Address: "10.20.0.2" }, env),
+      NetworkDuplicatePeerAddressError
+    )
+    await assert.rejects(
+      createPeer(store, globalAdmin, { fabricId: fabric.id, name: "anvilwg2", overlayIpv6Address: "fd00:dead:beef::2" }, env),
+      NetworkDuplicatePeerAddressError
+    )
+    // A different address is accepted.
+    const peer = await createPeer(store, globalAdmin, { fabricId: fabric.id, name: "anvilwg3", overlayIpv4Address: "10.20.0.4" }, env)
+    assert.equal(peer.overlayIpv4Address, "10.20.0.4")
+  })
+
   test("createPrefix and createPool validate CIDRs against the fabric overlay", async () => {
     const store = new TestNetworkStore()
     const fabric = await createFabric(store, globalAdmin, {
@@ -342,15 +365,55 @@ describe("network sync and apply over agent protocol", () => {
 
     const unavailable = new FakeNetworkAgentClient()
     unavailable.nextError = new NetworkAgentUnavailableError()
-    const res = await syncFabric(store, globalAdmin, fabric.id, { env, createAgentClient: () => unavailable, now: () => now })
-    assert.equal(res.endpoints[0]?.status, "FAILED")
-    assert.equal(res.endpoints[0]?.error, "agent unavailable")
+    await assert.rejects(
+      syncFabric(store, globalAdmin, fabric.id, { env, createAgentClient: () => unavailable, now: () => now }),
+      NetworkAgentUnavailableError
+    )
 
     const malformed = new FakeNetworkAgentClient()
     malformed.queueResponse({ status: 200, body: "not-an-object" })
-    const res2 = await syncFabric(store, globalAdmin, fabric.id, { env, createAgentClient: () => malformed, now: () => now })
-    assert.equal(res2.endpoints[0]?.status, "FAILED")
-    assert.equal(res2.endpoints[0]?.error, "malformed agent response")
+    await assert.rejects(
+      syncFabric(store, globalAdmin, fabric.id, { env, createAgentClient: () => malformed, now: () => now }),
+      NetworkMalformedAgentResponseError
+    )
+  })
+
+  test("syncFabric requires network:apply, not network:read", async () => {
+    const store = new TestNetworkStore()
+    const fabric = await createFabric(store, globalAdmin, {
+      name: "F",
+      slug: "sync-perm-fabric",
+      overlayIpv4Cidr: "10.20.0.0/16",
+      overlayIpv6Cidr: "fd00:dead:beef::/48",
+    })
+    store.addEndpoint({ id: "endpoint-1", name: "host-1", url: "ws://x/ws", tokenCiphertext: undefined, status: "ACTIVE", teamId: "team-1" })
+    await createPeer(store, globalAdmin, { fabricId: fabric.id, name: "anvilwg0", endpointId: "endpoint-1" }, env)
+    await assert.rejects(syncFabric(store, member, fabric.id, { env, now: () => now }), NetworkPermissionDeniedError)
+  })
+
+  test("syncFabric returns 200 with summaries when at least one endpoint syncs", async () => {
+    const store = new TestNetworkStore()
+    const fabric = await createFabric(store, globalAdmin, {
+      name: "F",
+      slug: "sync-partial-fabric",
+      overlayIpv4Cidr: "10.20.0.0/16",
+      overlayIpv6Cidr: "fd00:dead:beef::/48",
+    })
+    store.addEndpoint({ id: "endpoint-1", name: "host-1", url: "ws://x/ws", tokenCiphertext: undefined, status: "ACTIVE", teamId: "team-1" })
+    store.addEndpoint({ id: "endpoint-2", name: "host-2", url: "ws://x/ws", tokenCiphertext: undefined, status: "ACTIVE", teamId: "team-1" })
+    await createPeer(store, globalAdmin, { fabricId: fabric.id, name: "anvilwg0", endpointId: "endpoint-1", overlayIpv4Address: "10.20.0.2" }, env)
+    await createPeer(store, globalAdmin, { fabricId: fabric.id, name: "anvilwg1", endpointId: "endpoint-2", overlayIpv4Address: "10.20.0.3" }, env)
+
+    const agent = new FakeNetworkAgentClient()
+    agent.queueNetworkState({ agentId: "agent-1" })
+    const failing = new FakeNetworkAgentClient()
+    failing.nextError = new NetworkAgentUnavailableError()
+    let call = 0
+    const routes0 = { env, createAgentClient: () => (call++ === 0 ? agent : failing), now: () => now }
+    const result = await syncFabric(store, globalAdmin, fabric.id, routes0)
+    assert.equal(result.endpoints.length, 2)
+    assert.equal(result.endpoints.some((e) => e.status === "SYNCED"), true)
+    assert.equal(result.endpoints.some((e) => e.status === "FAILED"), true)
   })
 
   test("syncFabric rejects archived fabric and missing fabric", async () => {
@@ -409,6 +472,40 @@ describe("network sync and apply over agent protocol", () => {
     const serialized = JSON.stringify(result)
     assert.equal(serialized.includes("privateKey"), false)
     assert.equal(serialized.includes("presharedKey"), false)
+  })
+
+  test("applyFabric renders decrypted peer PSKs into the agent apply request and redacts responses", async () => {
+    const store = new TestNetworkStore()
+    const fabric = await createFabric(store, globalAdmin, {
+      name: "F",
+      slug: "apply-psk-fabric",
+      overlayIpv4Cidr: "10.20.0.0/16",
+      overlayIpv6Cidr: "fd00:dead:beef::/48",
+    })
+    store.addEndpoint({ id: "endpoint-1", name: "host-1", url: "ws://x/ws", tokenCiphertext: undefined, status: "ACTIVE", teamId: "team-1" })
+    await createPeer(store, globalAdmin, { fabricId: fabric.id, name: "anvilwg0", endpointId: "endpoint-1", overlayIpv4Address: "10.20.0.2" }, env)
+    // anvilwg1 carries an encrypted PSK generated server-side.
+    await createPeer(store, globalAdmin, { fabricId: fabric.id, name: "anvilwg1", overlayIpv4Address: "10.20.0.3", generatePresharedKey: true }, env)
+
+    const agent = new FakeNetworkAgentClient()
+    agent.queueApplyResponse({ status: 200 })
+    const result = await applyFabric(store, globalAdmin, fabric.id, "DRY_RUN", { env, createAgentClient: () => agent, now: () => now })
+
+    const applyReq = agent.applyRequests[0]
+    assert.ok(applyReq)
+    const remotePeer = applyReq.body.peers.find((p: { publicKey: string }) => p.publicKey !== "")
+    assert.ok(remotePeer)
+    // The remote peer entry must carry the decrypted preshared key for the agent.
+    assert.ok((remotePeer as { presharedKey?: string }).presharedKey, "expected decrypted presharedKey in agent apply request")
+    assert.equal((remotePeer as { presharedKey?: string }).presharedKey?.length, 44)
+
+    // The backend response and audit must never include the PSK material.
+    const serialized = JSON.stringify(result)
+    assert.equal(serialized.includes("presharedKey"), false)
+    assert.equal(serialized.includes("privateKey"), false)
+    const audit = store.auditEntries.find((e) => e.action === "network.dry_run")
+    assert.ok(audit)
+    assert.equal(JSON.stringify(audit).includes("presharedKey"), false)
   })
 
   test("applyFabric apply mode records FAILED operation when agent rejects", async () => {
@@ -648,6 +745,24 @@ class TestNetworkStore implements NetworkAdminStore {
       })
     }
     return result.sort((a, b) => a.peer.name.localeCompare(b.peer.name))
+  }
+  async findActivePeerWithOverlayAddress(
+    fabricId: string,
+    overlayIpv4Address: string | null,
+    overlayIpv6Address: string | null
+  ): Promise<PersistedHostNetworkPeer | null> {
+    if (!overlayIpv4Address && !overlayIpv6Address) {
+      return null
+    }
+    return (
+      [...this.peers.values()].find(
+        (p) =>
+          p.fabricId === fabricId &&
+          p.status !== "ARCHIVED" &&
+          ((overlayIpv4Address !== null && p.overlayIpv4Address === overlayIpv4Address) ||
+            (overlayIpv6Address !== null && p.overlayIpv6Address === overlayIpv6Address))
+      ) ?? null
+    )
   }
   async upsertNetworkStateSnapshot(input: {
     endpointId: string

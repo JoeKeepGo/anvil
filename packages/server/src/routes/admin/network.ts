@@ -13,6 +13,7 @@ import { AgentClient, type AgentClientOptions } from "../../services/agent"
 import {
   NetworkAgentUnavailableError,
   NetworkDuplicateFabricSlugError,
+  NetworkDuplicatePeerAddressError,
   NetworkFabricArchivedError,
   NetworkFabricHasActiveChildrenError,
   NetworkFabricNotFoundError,
@@ -20,6 +21,7 @@ import {
   NetworkMalformedAgentResponseError,
   NetworkPermissionDeniedError,
   NetworkPoolNotFoundError,
+  NetworkSecretKeyError,
   PrismaNetworkAdminStore,
   applyFabric,
   archiveFabric,
@@ -282,7 +284,11 @@ function mapNetworkRouteError(c: Context, error: unknown): Response {
   if (error instanceof NetworkDuplicateFabricSlugError) {
     return c.json({ error: { code: "FABRIC_SLUG_EXISTS", message: "A fabric with that slug already exists.", details: {} } }, 409)
   }
-  if (error instanceof NetworkFabricArchivedError || error instanceof NetworkFabricHasActiveChildrenError) {
+  if (
+    error instanceof NetworkFabricArchivedError ||
+    error instanceof NetworkFabricHasActiveChildrenError ||
+    error instanceof NetworkDuplicatePeerAddressError
+  ) {
     return c.json({ error: { code: "NETWORK_CONFLICT", message: "Network resource state conflict.", details: {} } }, 409)
   }
   if (error instanceof NetworkInvariantError) {
@@ -296,6 +302,9 @@ function mapNetworkRouteError(c: Context, error: unknown): Response {
   }
   if (error instanceof EndpointTokenKeyError) {
     return c.json({ error: { code: "ENDPOINT_TOKEN_KEY_REQUIRED", message: "Endpoint token encryption key is not configured.", details: {} } }, 500)
+  }
+  if (error instanceof NetworkSecretKeyError) {
+    return c.json({ error: { code: "NETWORK_SECRET_KEY_REQUIRED", message: "Network secret encryption key is not configured.", details: {} } }, 500)
   }
   throw error
 }

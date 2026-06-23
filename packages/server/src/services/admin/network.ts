@@ -12,6 +12,7 @@ import {
 import { AuthConfigError } from "../auth"
 import { decryptEndpointToken, EndpointTokenKeyError } from "./endpoints"
 import {
+  decryptNetworkSecret,
   encryptNetworkSecret,
   NetworkSecretKeyError,
 } from "./networkSecrets"
@@ -57,6 +58,7 @@ import {
 // Re-export the Phase 2 invariant error so callers catch a single class
 // regardless of whether it was thrown by networkModels helpers or this service.
 export { NetworkInvariantError } from "./networkModels"
+export { NetworkSecretKeyError } from "./networkSecrets"
 import { canPerformGlobalAction } from "./permissions"
 import { recordAdminAudit } from "./audit"
 import type { AdminAuditEntry, AdminPrincipal } from "./session"
@@ -309,6 +311,11 @@ export interface NetworkAdminStore {
   createPool(input: PoolPersistInput): Promise<PersistedProjectNetworkPool>
   updatePool(poolId: string, data: Partial<PoolPersistInput>): Promise<PersistedProjectNetworkPool>
   getFabricPeersWithEndpoints(fabricId: string): Promise<FabricPeerEndpoint[]>
+  findActivePeerWithOverlayAddress(
+    fabricId: string,
+    overlayIpv4Address: string | null,
+    overlayIpv6Address: string | null
+  ): Promise<PersistedHostNetworkPeer | null>
   upsertNetworkStateSnapshot(input: SnapshotPersistInput): Promise<BrowserNetworkStateSnapshot>
   createApplyOperation(input: ApplyOperationPersistInput): Promise<PersistedNetworkApplyOperation>
   recordAudit(entry: AdminAuditEntry): Promise<void>
@@ -351,6 +358,13 @@ export class NetworkPoolNotFoundError extends Error {
   constructor(message = "Network project pool was not found.") {
     super(message)
     this.name = "NetworkPoolNotFoundError"
+  }
+}
+
+export class NetworkDuplicatePeerAddressError extends Error {
+  constructor(message = "A peer with that overlay address already exists in the fabric.") {
+    super(message)
+    this.name = "NetworkDuplicatePeerAddressError"
   }
 }
 
@@ -671,6 +685,15 @@ export async function createPeer(
     { overlayIpv4Address: input.overlayIpv4Address, overlayIpv6Address: input.overlayIpv6Address }
   )
 
+  const conflictingPeer = await store.findActivePeerWithOverlayAddress(
+    fabric.id,
+    input.overlayIpv4Address ?? null,
+    input.overlayIpv6Address ?? null
+  )
+  if (conflictingPeer) {
+    throw new NetworkDuplicatePeerAddressError()
+  }
+
   const keyPair = generateWireGuardKeyPair()
   const privateKeyCiphertext = encryptNetworkSecret(env, keyPair.privateKey)
   let presharedKeyCiphertext: string | null = null
@@ -832,7 +855,9 @@ export async function syncFabric(
   fabricId: string,
   options: NetworkActionOptions = {}
 ): Promise<FabricSyncResponse> {
-  assertNetworkRead(actor)
+  // Sync is an action that persists observed snapshots and writes audit, so it
+  // requires network:apply, not network:read.
+  assertNetworkApply(actor)
   const fabric = await store.getFabric(fabricId)
   if (!fabric) {
     throw new NetworkFabricNotFoundError()
@@ -844,6 +869,8 @@ export async function syncFabric(
   const peerEndpoints = await store.getFabricPeersWithEndpoints(fabricId)
   const observedAt = (options.now?.() ?? new Date()).toISOString()
   const results: FabricSyncEndpointResult[] = []
+  const failureClasses: SyncFailureClass[] = []
+  let firstFailure: Error | undefined
 
   for (const { peer, endpoint } of peerEndpoints) {
     if (endpoint.status === "ARCHIVED") {
@@ -859,6 +886,13 @@ export async function syncFabric(
         snapshot,
       })
     } catch (error) {
+      const failureClass = syncFailureClass(error)
+      if (failureClass !== "other") {
+        failureClasses.push(failureClass)
+      }
+      if (!firstFailure) {
+        firstFailure = error instanceof Error ? error : new Error("sync failed")
+      }
       results.push({
         endpointId: endpoint.id,
         endpointName: endpoint.name,
@@ -868,6 +902,23 @@ export async function syncFabric(
     }
   }
 
+  // If every attempted endpoint failed, surface the documented route-level
+  // error so callers see 502/503 instead of a silent 200 with only failures.
+  const attempted = results.filter((r) => r.status === "SYNCED" || r.status === "FAILED")
+  const syncedCount = results.filter((r) => r.status === "SYNCED").length
+  if (attempted.length > 0 && syncedCount === 0) {
+    if (failureClasses.includes("unavailable")) {
+      throw new NetworkAgentUnavailableError()
+    }
+    if (failureClasses.includes("malformed")) {
+      throw new NetworkMalformedAgentResponseError()
+    }
+    if (firstFailure) {
+      throw firstFailure
+    }
+    throw new NetworkMalformedAgentResponseError()
+  }
+
   await recordAdminAudit(store, {
     actorUserId: actor.id,
     action: "network.sync",
@@ -875,12 +926,24 @@ export async function syncFabric(
     targetId: fabric.id,
     metadata: {
       endpointsTotal: results.length,
-      synced: results.filter((r) => r.status === "SYNCED").length,
+      synced: syncedCount,
       failed: results.filter((r) => r.status === "FAILED").length,
     },
   })
 
   return { fabricId: fabric.id, endpoints: results }
+}
+
+type SyncFailureClass = "unavailable" | "malformed" | "other"
+
+function syncFailureClass(error: unknown): SyncFailureClass {
+  if (error instanceof NetworkAgentUnavailableError) {
+    return "unavailable"
+  }
+  if (error instanceof NetworkMalformedAgentResponseError) {
+    return "malformed"
+  }
+  return "other"
 }
 
 async function syncEndpointNetworkState(
@@ -944,12 +1007,19 @@ export async function applyFabric(
   const peerEndpoints = await store.getFabricPeersWithEndpoints(fabricId)
   const results: FabricApplyEndpointResult[] = []
 
+  // Decrypt each active peer's preshared key once so it can be rendered into
+  // the declarative apply request sent to each peer's host agent. Decrypted
+  // PSKs are never persisted, logged, or returned to the browser; they only
+  // transit the trusted backend->agent transport. A missing/misconfigured
+  // network secret key surfaces as a 500 config error before any agent call.
+  const peerPskMap = decryptPeerPresharedKeys(detail.peers, options.env)
+
   for (const { peer, endpoint } of peerEndpoints) {
     if (endpoint.status === "ARCHIVED") {
       results.push({ endpointId: endpoint.id, endpointName: endpoint.name, status: "SKIPPED", mode })
       continue
     }
-    const requestBody = renderApplyRequest(peer, detail.peers, hub)
+    const requestBody = renderApplyRequest(peer, detail.peers, hub, peerPskMap)
     try {
       const response = await sendAgentApply(endpoint, mode, requestBody, options)
       if (response.status >= 200 && response.status < 300) {
@@ -1027,14 +1097,31 @@ export async function applyFabric(
 interface RenderedApplyRequest {
   mode: NetworkApplyMode
   interface: { name: string; listenPort: number; addresses: string[] }
-  peers: Array<{ publicKey: string; allowedIps: string[] }>
+  peers: Array<{ publicKey: string; presharedKey?: string; allowedIps: string[] }>
   routing: { ipv4Forwarding: boolean; ipv6Forwarding: boolean }
+}
+
+function decryptPeerPresharedKeys(
+  peers: PersistedHostNetworkPeer[],
+  env: NodeJS.ProcessEnv | undefined
+): Map<string, string | undefined> {
+  const resolvedEnv = env ?? process.env
+  const map = new Map<string, string | undefined>()
+  for (const peer of peers) {
+    if (peer.status === "ARCHIVED" || !peer.presharedKeyCiphertext) {
+      map.set(peer.id, undefined)
+      continue
+    }
+    map.set(peer.id, decryptNetworkSecret(resolvedEnv, peer.presharedKeyCiphertext))
+  }
+  return map
 }
 
 function renderApplyRequest(
   peer: PersistedHostNetworkPeer,
   allPeers: PersistedHostNetworkPeer[],
-  hub: PersistedWireGuardHub | undefined
+  hub: PersistedWireGuardHub | undefined,
+  pskMap: Map<string, string | undefined>
 ): RenderedApplyRequest {
   const addresses: string[] = []
   if (peer.overlayIpv4Address) addresses.push(`${peer.overlayIpv4Address}/32`)
@@ -1046,7 +1133,12 @@ function renderApplyRequest(
       const allowedIps: string[] = []
       if (candidate.overlayIpv4Address) allowedIps.push(`${candidate.overlayIpv4Address}/32`)
       if (candidate.overlayIpv6Address) allowedIps.push(`${candidate.overlayIpv6Address}/128`)
-      return { publicKey: candidate.publicKey, allowedIps }
+      const presharedKey = pskMap.get(candidate.id)
+      return {
+        publicKey: candidate.publicKey,
+        ...(presharedKey ? { presharedKey } : {}),
+        allowedIps,
+      }
     })
 
   return {
@@ -1546,6 +1638,30 @@ export class PrismaNetworkAdminStore implements NetworkAdminStore {
       })
     }
     return result
+  }
+
+  async findActivePeerWithOverlayAddress(
+    fabricId: string,
+    overlayIpv4Address: string | null,
+    overlayIpv6Address: string | null
+  ): Promise<PersistedHostNetworkPeer | null> {
+    this.assertDatabaseConfigured()
+    if (!overlayIpv4Address && !overlayIpv6Address) {
+      return null
+    }
+    const where: Prisma.HostNetworkPeerWhereInput = {
+      fabricId,
+      status: { not: "ARCHIVED" },
+      OR: [],
+    }
+    if (overlayIpv4Address) {
+      where.OR!.push({ overlayIpv4Address })
+    }
+    if (overlayIpv6Address) {
+      where.OR!.push({ overlayIpv6Address })
+    }
+    const peer = await this.prisma.hostNetworkPeer.findFirst({ where })
+    return peer ? mapPrismaPeer(peer) : null
   }
 
   async upsertNetworkStateSnapshot(input: SnapshotPersistInput): Promise<BrowserNetworkStateSnapshot> {

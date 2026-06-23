@@ -8,6 +8,7 @@ import type {
   AdminPrincipal,
   CreateBootstrapAdminRecord,
 } from "../../services/admin/session"
+import { AgentConnectionError } from "../../services/agent"
 import type { AgentRequest, AgentResponse } from "../../services/agent"
 import type {
   FabricPeerEndpoint,
@@ -103,6 +104,12 @@ describe("admin network routes", () => {
       headers: { cookie: sessionCookie(member) },
     })
     assert.equal(applyRes.status, 403)
+
+    const syncRes = await routes.request("/fabrics/fabric-1/sync", {
+      method: "POST",
+      headers: { cookie: sessionCookie(member) },
+    })
+    assert.equal(syncRes.status, 403)
   })
 
   test("admin fabric CRUD contract with safe responses", async () => {
@@ -229,13 +236,13 @@ describe("admin network routes", () => {
     assert.equal(serialized.includes("presharedKey"), false)
   })
 
-  test("sync maps agent unavailability to 503", async () => {
+  test("sync maps agent unavailability to 503 at the route", async () => {
     const store = new FakeNetworkStore()
     const fabric = await store.seedFabric()
     store.addEndpoint({ id: "endpoint-1", name: "host-1", url: "ws://x/ws", status: "ACTIVE", teamId: "team-1" })
     await store.seedPeer(fabric.id, "anvilwg0", "endpoint-1", "10.20.0.2")
     const agent = new FakeAgentClient()
-    agent.nextStatus = 503
+    agent.nextThrow = new AgentConnectionError("connection refused")
 
     const routes = createNetworkRoutes({
       env,
@@ -249,9 +256,57 @@ describe("admin network routes", () => {
       method: "POST",
       headers: { cookie: sessionCookie(globalAdmin) },
     })
-    assert.equal(res.status, 200)
-    const body = (await readJson(res)) as { sync: { endpoints: Array<{ status: string }> } }
-    assert.equal(body.sync.endpoints[0]?.status, "FAILED")
+    assert.equal(res.status, 503)
+    assert.deepEqual(await readJson(res), {
+      error: { code: "NETWORK_SYNC_FAILED", message: "Unable to reach network agent.", details: {} },
+    })
+  })
+
+  test("sync maps malformed agent response to 502 at the route", async () => {
+    const store = new FakeNetworkStore()
+    const fabric = await store.seedFabric()
+    store.addEndpoint({ id: "endpoint-1", name: "host-1", url: "ws://x/ws", status: "ACTIVE", teamId: "team-1" })
+    await store.seedPeer(fabric.id, "anvilwg0", "endpoint-1", "10.20.0.2")
+    const agent = new FakeAgentClient()
+    agent.nextBody = "not-an-object"
+
+    const routes = createNetworkRoutes({
+      env,
+      sessionStore: new TestSessionStore(globalAdmin),
+      networkStore: store,
+      createAgentClient: () => agent,
+      now: () => now,
+    })
+
+    const res = await routes.request(`/fabrics/${fabric.id}/sync`, {
+      method: "POST",
+      headers: { cookie: sessionCookie(globalAdmin) },
+    })
+    assert.equal(res.status, 502)
+  })
+
+  test("peer create rejects duplicate overlay address with 409", async () => {
+    const store = new FakeNetworkStore()
+    const fabric = await store.seedFabric()
+    const routes = createNetworkRoutes({
+      env,
+      sessionStore: new TestSessionStore(globalAdmin),
+      networkStore: store,
+    })
+
+    const first = await routes.request(`/fabrics/${fabric.id}/peers`, {
+      method: "POST",
+      headers: jsonHeaders(sessionCookie(globalAdmin)),
+      body: JSON.stringify({ name: "anvilwg0", overlayIpv4Address: "10.20.0.2" }),
+    })
+    assert.equal(first.status, 201)
+
+    const dup = await routes.request(`/fabrics/${fabric.id}/peers`, {
+      method: "POST",
+      headers: jsonHeaders(sessionCookie(globalAdmin)),
+      body: JSON.stringify({ name: "anvilwg1", overlayIpv4Address: "10.20.0.2" }),
+    })
+    assert.equal(dup.status, 409)
   })
 
   test("invalid fabric body returns 400", async () => {
@@ -487,6 +542,24 @@ class FakeNetworkStore implements NetworkAdminStore {
     }
     return result.sort((a, b) => a.peer.name.localeCompare(b.peer.name))
   }
+  async findActivePeerWithOverlayAddress(
+    fabricId: string,
+    overlayIpv4Address: string | null,
+    overlayIpv6Address: string | null
+  ): Promise<PersistedHostNetworkPeer | null> {
+    if (!overlayIpv4Address && !overlayIpv6Address) {
+      return null
+    }
+    return (
+      [...this.peers.values()].find(
+        (p) =>
+          p.fabricId === fabricId &&
+          p.status !== "ARCHIVED" &&
+          ((overlayIpv4Address !== null && p.overlayIpv4Address === overlayIpv4Address) ||
+            (overlayIpv6Address !== null && p.overlayIpv6Address === overlayIpv6Address))
+      ) ?? null
+    )
+  }
   async upsertNetworkStateSnapshot(input: { endpointId: string }) {
     this.snapshots.set(input.endpointId, input)
     return {
@@ -539,6 +612,8 @@ class FakeAgentClient implements NetworkAgentClient {
   private states: unknown[] = []
   private applies: AgentResponse[] = []
   nextStatus?: number
+  nextThrow?: Error
+  nextBody?: unknown
   readonly applyRequests: AgentRequest[] = []
 
   queueNetworkState(input: { agentId: string }) {
@@ -564,9 +639,19 @@ class FakeAgentClient implements NetworkAgentClient {
   }
 
   async execute(request: AgentRequest): Promise<AgentResponse> {
+    if (this.nextThrow) {
+      const err = this.nextThrow
+      this.nextThrow = undefined
+      throw err
+    }
     if (request.method === "GET" && request.path === "/agent/v1/network/state") {
       if (this.nextStatus) {
         return { id: "resp", status: this.nextStatus, error: "unavailable" }
+      }
+      if (this.nextBody !== undefined) {
+        const body = this.nextBody
+        this.nextBody = undefined
+        return { id: "resp", status: 200, body }
       }
       return { id: "resp", status: 200, body: this.states.shift() }
     }
