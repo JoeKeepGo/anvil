@@ -244,3 +244,40 @@ describe("network permission actions", () => {
     assert.equal(adminActions.includes("network:apply"), true)
   })
 })
+
+describe("vm lifecycle permission actions", () => {
+  test("exposes vm:read/create/start/stop/restart/delete as global admin actions only", () => {
+    const admin: AdminPrincipal = {
+      id: "admin-1",
+      email: "admin@example.com",
+      name: "Admin User",
+      status: "ACTIVE",
+      globalRole: "ADMIN",
+      teams: [],
+    }
+    const member: AdminPrincipal = {
+      id: "member-1",
+      email: "member@example.com",
+      name: "Member User",
+      status: "ACTIVE",
+      globalRole: "MEMBER",
+      teams: [
+        { id: "team-1", name: "Primary Team", role: "OWNER", status: "ACTIVE" },
+      ],
+    }
+
+    const vmActions = ["vm:read", "vm:create", "vm:start", "vm:stop", "vm:restart", "vm:delete"] as const
+    for (const action of vmActions) {
+      assert.equal(canPerformGlobalAction(admin, action), true, `admin should hold ${action}`)
+      assert.equal(canPerformGlobalAction(member, action), false, `member should not hold ${action}`)
+      assert.equal(globalAdminActions.includes(action), true, `globalAdminActions should include ${action}`)
+      assert.equal(teamOwnerActions.includes(action as never), false, `team owners must not auto-receive ${action}`)
+    }
+
+    const matrix = getPermissionMatrix()
+    const adminActions = matrix.global.find((entry) => entry.role === "ADMIN")?.actions ?? []
+    for (const action of vmActions) {
+      assert.equal(adminActions.includes(action), true, `permission matrix admin row should include ${action}`)
+    }
+  })
+})

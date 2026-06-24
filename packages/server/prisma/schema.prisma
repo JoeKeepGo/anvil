@@ -18,6 +18,7 @@ model User {
   auditLogs              AuditLog[]              @relation("AuditActor")
   targetAuditLogs        AuditLog[]              @relation("AuditTargetUser")
   networkApplyOperations NetworkApplyOperation[]
+  vmLifecycleOperations  VmLifecycleOperation[]
   createdAt              DateTime                @default(now())
   updatedAt              DateTime                @updatedAt
 }
@@ -61,6 +62,7 @@ model AgentEndpoint {
   resourceOwnerships    ResourceOwnership[]
   hostNetworkPeers      HostNetworkPeer[]
   networkStateSnapshots NetworkStateSnapshot[]
+  vmInstances           VmInstance[]
   createdAt             DateTime                 @default(now())
   updatedAt             DateTime                 @updatedAt
 
@@ -97,6 +99,7 @@ model Tenant {
   projectMemberships ProjectTenant[]
   quotaAllocations   ProjectTenantQuota[]
   resourceOwnerships ResourceOwnership[]
+  vmInstances        VmInstance[]
   createdAt          DateTime             @default(now())
   updatedAt          DateTime             @updatedAt
 
@@ -117,6 +120,7 @@ model Project {
   endpointBindings   EndpointProjectBinding[]
   resourceOwnerships ResourceOwnership[]
   networkPools       ProjectNetworkPool[]
+  vmInstances        VmInstance[]
   createdAt          DateTime                 @default(now())
   updatedAt          DateTime                 @updatedAt
 
@@ -405,6 +409,7 @@ model ProjectNetworkPool {
   ipv6Cidr       String?
   status         ProjectNetworkPoolStatus  @default(ACTIVE)
   allocationMode NetworkPoolAllocationMode @default(STATIC)
+  vmInstances    VmInstance[]
   createdAt      DateTime                  @default(now())
   updatedAt      DateTime                  @updatedAt
 
@@ -541,4 +546,89 @@ enum NetworkStateSnapshotStatus {
   ONLINE
   OFFLINE
   ERROR
+}
+
+// M13 Phase 2: tenant-scoped VM lifecycle v1 ownership and operation records.
+// VmInstance is the tenant-scoped lifecycle record bound to a project, tenant,
+// endpoint, and project network pool. It captures durable lifecycle state
+// (limits, address family) without exposing Incus internals to the browser.
+// VmLifecycleOperation tracks each create/start/stop/restart/delete action
+// and is the audit/operation history surface for the lifecycle API.
+
+model VmInstance {
+  id                 String                 @id @default(uuid())
+  name               String
+  endpointId         String
+  endpoint           AgentEndpoint          @relation(fields: [endpointId], references: [id])
+  projectId          String
+  project            Project                @relation(fields: [projectId], references: [id])
+  tenantId           String
+  tenant             Tenant                 @relation(fields: [tenantId], references: [id])
+  networkPoolId      String?
+  networkPool        ProjectNetworkPool?    @relation(fields: [networkPoolId], references: [id], onDelete: SetNull)
+  imageReference     String
+  status             VmInstanceStatus       @default(PROVISIONING)
+  cpuCount           Int
+  memoryBytes        BigInt
+  rootDiskBytes      BigInt
+  addressFamily      VmAddressFamily        @default(IPV4)
+  lifecycleOperations VmLifecycleOperation[]
+  createdAt          DateTime               @default(now())
+  updatedAt          DateTime               @updatedAt
+
+  @@unique([endpointId, name])
+  @@index([projectId])
+  @@index([tenantId])
+  @@index([endpointId])
+  @@index([networkPoolId])
+  @@index([status])
+}
+
+model VmLifecycleOperation {
+  id                String                       @id @default(uuid())
+  vmInstanceId      String
+  vmInstance        VmInstance                   @relation(fields: [vmInstanceId], references: [id], onDelete: Cascade)
+  action            VmLifecycleAction
+  status            VmLifecycleOperationStatus   @default(QUEUED)
+  requestedByUserId String
+  requestedByUser   User                         @relation(fields: [requestedByUserId], references: [id])
+  summary           String?
+  errorSummary      String?
+  createdAt         DateTime                     @default(now())
+  updatedAt         DateTime                     @updatedAt
+
+  @@index([vmInstanceId])
+  @@index([requestedByUserId])
+  @@index([status])
+  @@index([action])
+}
+
+enum VmInstanceStatus {
+  PROVISIONING
+  RUNNING
+  STOPPED
+  FAILED
+  DELETED
+}
+
+enum VmLifecycleAction {
+  CREATE
+  START
+  STOP
+  RESTART
+  DELETE
+}
+
+enum VmLifecycleOperationStatus {
+  QUEUED
+  RUNNING
+  SUCCEEDED
+  FAILED
+  CANCELLED
+}
+
+enum VmAddressFamily {
+  IPV4
+  IPV6
+  DUAL
 }

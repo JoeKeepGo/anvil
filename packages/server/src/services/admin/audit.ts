@@ -146,6 +146,19 @@ const sensitiveMetadataKeys = new Set([
   "endpointtoken",
   "networksecretkey",
   "wireguardprivatekey",
+  // M13 Phase 2: VM lifecycle metadata must never carry agent credentials,
+  // Incus user-data, cloud-init payloads, or raw lifecycle agent responses.
+  "vmconfig",
+  "userdata",
+  "cloudinit",
+  "agentresponse",
+  "agentpayload",
+  "incusresponse",
+  "incuspayload",
+  "sshkey",
+  "sshpublickey",
+  "sshprivatekey",
+  "privatekeymaterial",
 ])
 
 function isSensitiveMetadataKey(key: string): boolean {

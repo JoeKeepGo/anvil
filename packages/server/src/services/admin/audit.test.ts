@@ -479,3 +479,155 @@ describe("network audit redaction completeness", () => {
     assert.equal(serialized.includes("list-nested-session-data-that-must-not-leak"), false)
   })
 })
+
+describe("vm lifecycle audit redaction", () => {
+  test("redacts lifecycle agent payload and cloud-init material while preserving action identity", async () => {
+    const store = new TestAdminStore()
+
+    await recordAdminAudit(store, {
+      actorUserId: "admin-1",
+      action: "vm.create",
+      targetType: "vm_instance",
+      targetId: "vm-1",
+      metadata: {
+        vmInstanceId: "vm-1",
+        action: "CREATE",
+        status: "SUCCEEDED",
+        endpointId: "endpoint-1",
+        projectId: "project-1",
+        tenantId: "tenant-1",
+        cpuCount: 1,
+        memoryBytes: 268_435_456,
+        rootDiskBytes: 5_368_709_120,
+        addressFamily: "IPV4",
+        networkPoolId: "pool-1",
+        summary: "create acknowledged by agent lifecycle protocol",
+        vmConfig: "vm-config-that-must-not-leak",
+        userData: "#cloud-config\npassword: must-not-leak",
+        cloudInit: "cloud-init-that-must-not-leak",
+        agentResponse: "agent-response-that-must-not-leak",
+        agentPayload: "agent-payload-that-must-not-leak",
+        incusResponse: "incus-response-that-must-not-leak",
+        incusPayload: "incus-payload-that-must-not-leak",
+        sshKey: "ssh-key-that-must-not-leak",
+        sshPublicKey: "ssh-public-key-that-must-not-leak",
+        sshPrivateKey: "ssh-private-key-that-must-not-leak",
+        privateKeyMaterial: "private-key-material-that-must-not-leak",
+        nested: {
+          userData: "nested-user-data-that-must-not-leak",
+          agentPayload: "nested-agent-payload-that-must-not-leak",
+        },
+      },
+    })
+
+    const entry = store.auditEntries[0]
+    assert.ok(entry)
+    // Action identity survives.
+    assert.equal(entry.action, "vm.create")
+    assert.equal(entry.targetType, "vm_instance")
+    assert.equal(entry.metadata?.vmInstanceId, "vm-1")
+    assert.equal(entry.metadata?.action, "CREATE")
+    assert.equal(entry.metadata?.status, "SUCCEEDED")
+    assert.equal(entry.metadata?.endpointId, "endpoint-1")
+    assert.equal(entry.metadata?.projectId, "project-1")
+    assert.equal(entry.metadata?.tenantId, "tenant-1")
+    assert.equal(entry.metadata?.cpuCount, 1)
+    assert.equal(entry.metadata?.memoryBytes, 268_435_456)
+    assert.equal(entry.metadata?.rootDiskBytes, 5_368_709_120)
+    assert.equal(entry.metadata?.addressFamily, "IPV4")
+    assert.equal(entry.metadata?.networkPoolId, "pool-1")
+    assert.equal(entry.metadata?.summary, "create acknowledged by agent lifecycle protocol")
+    // Secret material redacted.
+    assert.equal(entry.metadata?.vmConfig, "[REDACTED]")
+    assert.equal(entry.metadata?.userData, "[REDACTED]")
+    assert.equal(entry.metadata?.cloudInit, "[REDACTED]")
+    assert.equal(entry.metadata?.agentResponse, "[REDACTED]")
+    assert.equal(entry.metadata?.agentPayload, "[REDACTED]")
+    assert.equal(entry.metadata?.incusResponse, "[REDACTED]")
+    assert.equal(entry.metadata?.incusPayload, "[REDACTED]")
+    assert.equal(entry.metadata?.sshKey, "[REDACTED]")
+    assert.equal(entry.metadata?.sshPublicKey, "[REDACTED]")
+    assert.equal(entry.metadata?.sshPrivateKey, "[REDACTED]")
+    assert.equal(entry.metadata?.privateKeyMaterial, "[REDACTED]")
+    assert.equal(
+      (entry.metadata?.nested as Record<string, unknown> | undefined)?.userData,
+      "[REDACTED]"
+    )
+    assert.equal(
+      (entry.metadata?.nested as Record<string, unknown> | undefined)?.agentPayload,
+      "[REDACTED]"
+    )
+
+    const serialized = JSON.stringify(store.auditEntries)
+    assert.equal(serialized.includes("vm-config-that-must-not-leak"), false)
+    assert.equal(serialized.includes("password: must-not-leak"), false)
+    assert.equal(serialized.includes("cloud-init-that-must-not-leak"), false)
+    assert.equal(serialized.includes("agent-response-that-must-not-leak"), false)
+    assert.equal(serialized.includes("agent-payload-that-must-not-leak"), false)
+    assert.equal(serialized.includes("incus-response-that-must-not-leak"), false)
+    assert.equal(serialized.includes("incus-payload-that-must-not-leak"), false)
+    assert.equal(serialized.includes("ssh-key-that-must-not-leak"), false)
+    assert.equal(serialized.includes("ssh-public-key-that-must-not-leak"), false)
+    assert.equal(serialized.includes("ssh-private-key-that-must-not-leak"), false)
+    assert.equal(serialized.includes("private-key-material-that-must-not-leak"), false)
+    assert.equal(serialized.includes("nested-user-data-that-must-not-leak"), false)
+    assert.equal(serialized.includes("nested-agent-payload-that-must-not-leak"), false)
+  })
+
+  test("listAdminAuditEntries redacts lifecycle secret keys before browser output", async () => {
+    const store = new TestAuditQueryStore()
+    store.addAuditEntry({
+      id: "audit-vm-1",
+      actor: { id: "admin-1", email: "admin@example.com", name: "Admin User" },
+      action: "vm.start",
+      targetType: "vm_lifecycle_operation",
+      targetId: "op-1",
+      metadata: {
+        vmInstanceId: "vm-1",
+        action: "START",
+        status: "SUCCEEDED",
+        endpointId: "endpoint-1",
+        projectId: "project-1",
+        tenantId: "tenant-1",
+        vmConfig: "list-vm-config-that-must-not-leak",
+        userData: "list-user-data-that-must-not-leak",
+        agentPayload: "list-agent-payload-that-must-not-leak",
+        incusResponse: "list-incus-response-that-must-not-leak",
+        sshPrivateKey: "list-ssh-private-key-that-must-not-leak",
+      },
+      createdAt: "2026-06-24T00:00:00.000Z",
+    })
+
+    const result = await listAdminAuditEntries(
+      store,
+      {
+        id: "admin-1",
+        email: "admin@example.com",
+        name: "Admin User",
+        status: "ACTIVE",
+        globalRole: "ADMIN",
+        teams: [],
+      },
+      { targetType: "vm_lifecycle_operation" }
+    )
+
+    const entry = result.audit[0]
+    assert.ok(entry)
+    assert.equal(entry.action, "vm.start")
+    assert.equal(entry.metadata?.vmInstanceId, "vm-1")
+    assert.equal(entry.metadata?.action, "START")
+    assert.equal(entry.metadata?.status, "SUCCEEDED")
+    assert.equal(entry.metadata?.vmConfig, "[REDACTED]")
+    assert.equal(entry.metadata?.userData, "[REDACTED]")
+    assert.equal(entry.metadata?.agentPayload, "[REDACTED]")
+    assert.equal(entry.metadata?.incusResponse, "[REDACTED]")
+    assert.equal(entry.metadata?.sshPrivateKey, "[REDACTED]")
+
+    const serialized = JSON.stringify(result)
+    assert.equal(serialized.includes("list-vm-config-that-must-not-leak"), false)
+    assert.equal(serialized.includes("list-user-data-that-must-not-leak"), false)
+    assert.equal(serialized.includes("list-agent-payload-that-must-not-leak"), false)
+    assert.equal(serialized.includes("list-incus-response-that-must-not-leak"), false)
+    assert.equal(serialized.includes("list-ssh-private-key-that-must-not-leak"), false)
+  })
+})

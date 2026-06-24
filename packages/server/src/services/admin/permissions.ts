@@ -32,6 +32,12 @@ export const globalAdminActions: GlobalAction[] = [
   "network:read",
   "network:write",
   "network:apply",
+  "vm:read",
+  "vm:create",
+  "vm:start",
+  "vm:stop",
+  "vm:restart",
+  "vm:delete",
 ]
 
 export const teamOwnerActions: TeamAction[] = [
