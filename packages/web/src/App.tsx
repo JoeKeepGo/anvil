@@ -19,6 +19,9 @@ import { AdminRoute } from "@/pages/admin/AdminRoute"
 import { AdminTeams } from "@/pages/admin/AdminTeams"
 import { AdminTenantDetail, AdminTenants } from "@/pages/admin/AdminTenants"
 import { AdminUsers } from "@/pages/admin/AdminUsers"
+import { AdminVmCreate } from "@/pages/admin/AdminVmCreate"
+import { AdminVmDetail } from "@/pages/admin/AdminVmDetail"
+import { AdminVms } from "@/pages/admin/AdminVms"
 
 export function App() {
   return (
@@ -46,6 +49,9 @@ export function App() {
             <Route path="projects/:projectId" element={<AdminProjectDetail />} />
             <Route path="permissions" element={<AdminPermissions />} />
             <Route path="audit" element={<AdminAudit />} />
+            <Route path="vms" element={<AdminVms />} />
+            <Route path="vms/create" element={<AdminVmCreate />} />
+            <Route path="vms/:vmId" element={<AdminVmDetail />} />
           </Route>
         </Route>
       </Routes>

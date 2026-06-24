@@ -47,6 +47,12 @@ import type {
   UpdateAdminProjectInput,
   UpdateAdminTenantInput,
   UpdateAdminUserInput,
+  BrowserVmInstance,
+  BrowserVmLifecycleOperation,
+  CreateVmInput,
+  CreateVmResult,
+  PerformVmActionResult,
+  VmQuery,
 } from "../types"
 
 class ApiRequestError extends Error {
@@ -525,6 +531,61 @@ export function applyAdminNetworkFabric(fabricId: string): Promise<AdminNetworkA
 export function fetchAdminProjectNetworkPools(): Promise<AdminProjectNetworkPool[]> {
   return apiFetch<AdminProjectNetworkPoolsResponse>("/api/admin/network/project-pools").then(
     (response) => response.pools
+  )
+}
+
+// M13 VM lifecycle. Browser code calls same-origin Anvil /api only; never
+// Agent, Incus, WireGuard, or tunnel URLs. No Web Storage session material.
+export function fetchAdminVms(query?: VmQuery): Promise<BrowserVmInstance[]> {
+  const searchParams = new URLSearchParams()
+  if (query?.projectId) searchParams.set("projectId", query.projectId)
+  if (query?.tenantId) searchParams.set("tenantId", query.tenantId)
+  if (query?.endpointId) searchParams.set("endpointId", query.endpointId)
+  if (query?.status) searchParams.set("status", query.status)
+  const qs = searchParams.toString()
+  return apiFetch<{ vms: BrowserVmInstance[] }>(`/api/admin/vms${qs ? `?${qs}` : ""}`).then(
+    (response) => response.vms
+  )
+}
+
+export function fetchAdminVm(vmId: string): Promise<BrowserVmInstance> {
+  return apiFetch<{ vm: BrowserVmInstance }>(
+    `/api/admin/vms/${encodeURIComponent(vmId)}`
+  ).then((response) => response.vm)
+}
+
+export function createAdminVm(input: CreateVmInput): Promise<CreateVmResult> {
+  return apiFetch<CreateVmResult>("/api/admin/vms", {
+    method: "POST",
+    body: JSON.stringify(input),
+  })
+}
+
+export function performVmAction(
+  vmId: string,
+  action: "START" | "STOP" | "RESTART"
+): Promise<PerformVmActionResult> {
+  return apiFetch<PerformVmActionResult>(
+    `/api/admin/vms/${encodeURIComponent(vmId)}/${action.toLowerCase()}`,
+    { method: "POST" }
+  )
+}
+
+export function deleteAdminVm(vmId: string): Promise<PerformVmActionResult> {
+  return apiFetch<PerformVmActionResult>(
+    `/api/admin/vms/${encodeURIComponent(vmId)}`,
+    { method: "DELETE" }
+  )
+}
+
+export function fetchAdminVmOperations(
+  vmInstanceId?: string
+): Promise<{ operations: BrowserVmLifecycleOperation[]; total: number }> {
+  const searchParams = new URLSearchParams()
+  if (vmInstanceId) searchParams.set("vmInstanceId", vmInstanceId)
+  const qs = searchParams.toString()
+  return apiFetch<{ operations: BrowserVmLifecycleOperation[]; total: number }>(
+    `/api/admin/vm-operations${qs ? `?${qs}` : ""}`
   )
 }
 
