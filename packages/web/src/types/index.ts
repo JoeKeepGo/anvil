@@ -135,8 +135,12 @@ export type GlobalAction =
   | "network:read"
   | "network:write"
   | "network:apply"
-  | "vms:read"
-  | "vms:write"
+  | "vm:read"
+  | "vm:create"
+  | "vm:start"
+  | "vm:stop"
+  | "vm:restart"
+  | "vm:delete"
 
 export type TeamAction =
   | "members:read"

@@ -82,7 +82,7 @@ const sections = [
     detail: "Provision and manage tenant-scoped VM lifecycle instances.",
     icon: Monitor,
     enabled: (context: AppShellContext) =>
-      hasAnyGlobalAction(context.session.access, ["vms:read"]),
+      hasAnyGlobalAction(context.session.access, ["vm:read"]),
   },
   {
     to: "/admin/permissions",

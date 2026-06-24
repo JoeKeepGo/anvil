@@ -15,7 +15,7 @@ import type { AppShellContext } from "@/components/layout/Layout"
 import { useApi } from "@/hooks/useApi"
 import { fetchAdminVms } from "@/lib/api"
 import type { BrowserVmInstance, VmInstanceStatus } from "@/types"
-import { canReadVms } from "./AdminVms.access"
+import { canCreateVm, canReadVms } from "./AdminVms.access"
 import {
   AdminEmptyState,
   AdminErrorState,
@@ -37,6 +37,7 @@ const statusBadgeVariant: Record<VmInstanceStatus, "secondary" | "outline" | "de
 export function AdminVms() {
   const { session } = useOutletContext<AppShellContext>()
   const canRead = canReadVms(session.access)
+  const canCreate = canCreateVm(session.access)
   const vmsApi = useApi(() => fetchAdminVms(), { enabled: canRead })
   const [displayVms, setDisplayVms] = useState<BrowserVmInstance[]>([])
 
@@ -69,12 +70,14 @@ export function AdminVms() {
         actions={
           <div className="flex shrink-0 flex-wrap gap-2">
             <RefreshButton onClick={onRefresh} label="Refresh VMs" />
-            <Button type="button" asChild>
-              <Link to="/admin/vms/create">
-                <Plus className="mr-1 h-4 w-4" />
-                Create VM
-              </Link>
-            </Button>
+            {canCreate ? (
+              <Button type="button" asChild>
+                <Link to="/admin/vms/create">
+                  <Plus className="mr-1 h-4 w-4" />
+                  Create VM
+                </Link>
+              </Button>
+            ) : null}
           </div>
         }
       />

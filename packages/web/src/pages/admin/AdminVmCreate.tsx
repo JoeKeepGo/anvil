@@ -22,7 +22,7 @@ import {
 } from "@/lib/api"
 import type { VmAddressFamily } from "@/types"
 import { ApiRequestError } from "@/lib/api"
-import { canWriteVms } from "./AdminVms.access"
+import { canCreateVm } from "./AdminVms.access"
 import {
   AdminForbiddenState,
   AdminPageHeader,
@@ -32,7 +32,7 @@ import {
 
 export function AdminVmCreate() {
   const { session } = useOutletContext<AppShellContext>()
-  const canWrite = canWriteVms(session.access)
+  const canWrite = canCreateVm(session.access)
   const navigate = useNavigate()
 
   // Fetch reference data for the form

@@ -159,11 +159,11 @@ describe("M12 admin network navigation", () => {
 })
 
 describe("M13 admin VM lifecycle navigation", () => {
-  test("exposes VMs in admin sidebar and overview through vms:read capability", () => {
+  test("exposes VMs in admin sidebar and overview through vm:read capability", () => {
     assert.match(sidebarSource, /to: "\/admin\/vms"/)
-    assert.match(sidebarSource, /vms:read/)
+    assert.match(sidebarSource, /vm:read/)
     assert.match(overviewSource, /to: "\/admin\/vms"/)
-    assert.match(overviewSource, /vms:read/)
+    assert.match(overviewSource, /vm:read/)
   })
 
   test("mounts VM list, create, and detail admin routes", () => {
@@ -182,8 +182,8 @@ describe("M13 admin VM lifecycle navigation", () => {
     assert.match(adminVmDetailSource, /fetchAdminVm/)
     assert.match(adminVmDetailSource, /fetchAdminVmOperations/)
     assert.match(adminVmCreateSource, /createAdminVm/)
-    assert.match(allVmSources, /vms:read/)
-    assert.match(allVmSources, /vms:write/)
+    assert.match(allVmSources, /vm:read/)
+    assert.match(allVmSources, /vm:create/)
 
     for (const forbidden of [
       "tokenCiphertext",
@@ -210,7 +210,7 @@ describe("M13 admin VM lifecycle navigation", () => {
     }
   })
 
-  test("admin VMs list page does not fetch before vms:read capability is available", () => {
+  test("admin VMs list page does not fetch before vm:read capability is available", () => {
     const readCheckIndex = adminVmsSource.indexOf("const canRead")
     const vmFetchIndex = adminVmsSource.indexOf("useApi(() => fetchAdminVms()")
 
@@ -220,8 +220,11 @@ describe("M13 admin VM lifecycle navigation", () => {
     assert.match(adminVmsSource, /useApi\(\(\) => fetchAdminVms\(\),\s*\{\s*enabled:\s*canRead\s*\}\)/)
   })
 
-  test("admin VM detail page conditionally gates lifecycle controls on vms:write", () => {
-    assert.match(adminVmDetailSource, /canWriteVms/)
+  test("admin VM detail page conditionally gates lifecycle controls with granular permissions", () => {
+    assert.match(adminVmDetailSource, /canStartVm/)
+    assert.match(adminVmDetailSource, /canStopVm/)
+    assert.match(adminVmDetailSource, /canRestartVm/)
+    assert.match(adminVmDetailSource, /canDeleteVm/)
     assert.match(adminVmDetailSource, /performVmAction/)
     assert.match(adminVmDetailSource, /deleteAdminVm/)
     assert.match(adminVmDetailSource, /ConfirmDialog/)

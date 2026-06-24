@@ -27,7 +27,13 @@ import type {
   VmLifecycleOperationStatus,
 } from "@/types"
 import { ConfirmDialog } from "@/components/ConfirmDialog"
-import { canReadVms, canWriteVms } from "./AdminVms.access"
+import {
+  canDeleteVm,
+  canReadVms,
+  canRestartVm,
+  canStartVm,
+  canStopVm,
+} from "./AdminVms.access"
 import {
   AdminEmptyState,
   AdminErrorState,
@@ -75,7 +81,10 @@ export function AdminVmDetail() {
   const { session } = useOutletContext<AppShellContext>()
   const { vmId } = useParams<{ vmId: string }>()
   const canRead = canReadVms(session.access)
-  const canWrite = canWriteVms(session.access)
+  const canStart = canStartVm(session.access)
+  const canStop = canStopVm(session.access)
+  const canRestart = canRestartVm(session.access)
+  const canDelete = canDeleteVm(session.access)
 
   const vmApi = useApi(() => fetchAdminVm(vmId!), { enabled: canRead && Boolean(vmId) })
   const opsApi = useApi(() => fetchAdminVmOperations(vmId), {
@@ -215,9 +224,9 @@ export function AdminVmDetail() {
       </div>
 
       {/* Lifecycle action controls */}
-      {canWrite && vm.status !== "DELETED" ? (
+      {vm && vm.status !== "DELETED" ? (
         <div className="flex flex-wrap gap-3">
-          {available.includes("START") ? (
+          {available.includes("START") && canStart ? (
             <Button
               type="button"
               onClick={() => handleAction("START")}
@@ -227,7 +236,7 @@ export function AdminVmDetail() {
               {actionInProgress?.action === "START" ? "Starting..." : "Start"}
             </Button>
           ) : null}
-          {available.includes("STOP") ? (
+          {available.includes("STOP") && canStop ? (
             <Button
               type="button"
               variant="secondary"
@@ -238,7 +247,7 @@ export function AdminVmDetail() {
               {actionInProgress?.action === "STOP" ? "Stopping..." : "Stop"}
             </Button>
           ) : null}
-          {available.includes("RESTART") ? (
+          {available.includes("RESTART") && canRestart ? (
             <Button
               type="button"
               variant="secondary"
@@ -249,7 +258,7 @@ export function AdminVmDetail() {
               {actionInProgress?.action === "RESTART" ? "Restarting..." : "Restart"}
             </Button>
           ) : null}
-          {available.includes("DELETE") ? (
+          {available.includes("DELETE") && canDelete ? (
             <Button
               type="button"
               variant="destructive"
@@ -257,7 +266,7 @@ export function AdminVmDetail() {
               disabled={actionInProgress !== null}
             >
               <Trash2 className="mr-1 h-4 w-4" />
-              {isDeleting ? "Deleting..." : "Delete"}
+              {actionInProgress?.action === "DELETE" ? "Deleting..." : "Delete"}
             </Button>
           ) : null}
         </div>

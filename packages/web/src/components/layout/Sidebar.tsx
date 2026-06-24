@@ -75,7 +75,7 @@ const adminNavItems: AdminNavItem[] = [
     to: "/admin/vms",
     icon: Monitor,
     label: "VMs",
-    enabled: (access: AdminAccessSummary) => hasAnyGlobalAction(access, ["vms:read"]),
+    enabled: (access: AdminAccessSummary) => hasAnyGlobalAction(access, ["vm:read"]),
   },
   { to: "/admin/permissions", icon: ClipboardList, label: "Permissions" },
   { to: "/admin/audit", icon: Activity, label: "Audit" },
