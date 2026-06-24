@@ -9,8 +9,12 @@
 // Order of operations for every mutation:
 //   1. Backend policy passes (permission / tenant / project / endpoint binding /
 //      network pool readiness / quota / allocation) BEFORE any agent call.
-//   2. A lifecycle operation record is persisted (QUEUED -> RUNNING ->
-//      SUCCEEDED|FAILED) inside a transaction with the VM instance mutation.
+//   2. The VM instance record and its initial lifecycle operation record
+//      (QUEUED) are persisted atomically in a single database transaction
+//      (`createVmInstanceAndQueuedOperation`) so a crash cannot leave a VM
+//      without an operation record or vice versa. The agent call happens
+//      AFTER this transaction commits, outside it, and the operation then
+//      transitions RUNNING -> SUCCEEDED|FAILED.
 //   3. Only AFTER backend policy passes is the agent lifecycle protocol
 //      invoked. Wave 3 (agent Incus lifecycle protocol) is not yet shipped,
 //      so the agent call is routed through an injectable
@@ -160,6 +164,33 @@ export interface VmLifecycleStore extends VmLifecyclePolicyStore {
     summary?: string | null
     errorSummary?: string | null
   }): Promise<PersistedVmLifecycleOperation>
+  /**
+   * Atomically persist the VM instance record and its initial lifecycle
+   * operation. Implementations MUST commit both rows in a single database
+   * transaction so a crash between the two writes cannot leave a VM without
+   * an operation record (or vice versa). The agent call happens AFTER this
+   * method returns, outside the transaction.
+   */
+  createVmInstanceAndQueuedOperation(input: {
+    vmInstance: {
+      id: string
+      name: string
+      endpointId: string
+      projectId: string
+      tenantId: string
+      networkPoolId: string | null
+      imageReference: string
+      cpuCount: number
+      memoryBytes: bigint
+      rootDiskBytes: bigint
+      addressFamily: VmAddressFamily
+      status: VmInstanceStatus
+    }
+    operation: {
+      action: VmLifecycleAction
+      requestedByUserId: string
+    }
+  }): Promise<{ vmInstance: PersistedVmInstance; operation: PersistedVmLifecycleOperation }>
   updateOperation(
     operationId: string,
     input: { status: VmLifecycleOperationStatus; summary?: string | null; errorSummary?: string | null }
@@ -330,28 +361,31 @@ export async function createVm(
 
   const vmId = cryptoRandomUuid()
   const now = options.now?.() ?? new Date()
+  void now
 
-  // Provision the VM instance + queued operation in a transaction. The
-  // operation transitions to RUNNING while we call the agent.
-  const instance = await store.createVmInstance({
-    id: vmId,
-    name: input.name,
-    endpointId: input.endpointId,
-    projectId: input.projectId,
-    tenantId: input.tenantId,
-    networkPoolId: input.networkPoolId,
-    imageReference: input.imageReference,
-    cpuCount: input.cpuCount,
-    memoryBytes: BigInt(input.memoryBytes),
-    rootDiskBytes: BigInt(input.rootDiskBytes),
-    addressFamily: input.addressFamily,
-    status: "PROVISIONING",
-  })
-  const operation = await store.createOperation({
-    vmInstanceId: vmId,
-    action: "CREATE",
-    status: "QUEUED",
-    requestedByUserId: actor.id,
+  // Provision the VM instance + queued operation atomically (store commits
+  // both rows in a single transaction). The agent call happens AFTER this
+  // returns, outside the transaction, and the operation then transitions to
+  // RUNNING -> SUCCEEDED|FAILED.
+  const { vmInstance: instance, operation } = await store.createVmInstanceAndQueuedOperation({
+    vmInstance: {
+      id: vmId,
+      name: input.name,
+      endpointId: input.endpointId,
+      projectId: input.projectId,
+      tenantId: input.tenantId,
+      networkPoolId: input.networkPoolId,
+      imageReference: input.imageReference,
+      cpuCount: input.cpuCount,
+      memoryBytes: BigInt(input.memoryBytes),
+      rootDiskBytes: BigInt(input.rootDiskBytes),
+      addressFamily: input.addressFamily,
+      status: "PROVISIONING",
+    },
+    operation: {
+      action: "CREATE",
+      requestedByUserId: actor.id,
+    },
   })
 
   // Audit the creation of the operation record (queued) immediately.
@@ -896,8 +930,8 @@ type VmLifecyclePrismaClient = Pick<
   | "endpointProjectBinding"
   | "projectNetworkPool"
   | "projectQuota"
-  | "projectQuota"
   | "projectTenantQuota"
+  | "$transaction"
 >
 
 export class PrismaVmLifecycleStore implements VmLifecycleStore {
@@ -1133,6 +1167,62 @@ export class PrismaVmLifecycleStore implements VmLifecycleStore {
       },
     })
     return mapPrismaOperation(row)
+  }
+
+  async createVmInstanceAndQueuedOperation(input: {
+    vmInstance: {
+      id: string
+      name: string
+      endpointId: string
+      projectId: string
+      tenantId: string
+      networkPoolId: string | null
+      imageReference: string
+      cpuCount: number
+      memoryBytes: bigint
+      rootDiskBytes: bigint
+      addressFamily: VmAddressFamily
+      status: VmInstanceStatus
+    }
+    operation: { action: VmLifecycleAction; requestedByUserId: string }
+  }): Promise<{ vmInstance: PersistedVmInstance; operation: PersistedVmLifecycleOperation }> {
+    this.assertDatabaseConfigured()
+    // Both rows commit atomically; a crash between writes cannot leave the
+    // VM record without its initial operation record (or vice versa). The
+    // agent call happens after this method returns, outside the transaction.
+    const result = await this.prisma.$transaction(async (tx) => {
+      const vmRow = await tx.vmInstance.create({
+        data: {
+          id: input.vmInstance.id,
+          name: input.vmInstance.name,
+          endpointId: input.vmInstance.endpointId,
+          projectId: input.vmInstance.projectId,
+          tenantId: input.vmInstance.tenantId,
+          networkPoolId: input.vmInstance.networkPoolId,
+          imageReference: input.vmInstance.imageReference,
+          status: input.vmInstance.status,
+          cpuCount: input.vmInstance.cpuCount,
+          memoryBytes: input.vmInstance.memoryBytes,
+          rootDiskBytes: input.vmInstance.rootDiskBytes,
+          addressFamily: input.vmInstance.addressFamily,
+        },
+      })
+      const opRow = await tx.vmLifecycleOperation.create({
+        data: {
+          vmInstanceId: vmRow.id,
+          action: input.operation.action,
+          status: "QUEUED",
+          requestedByUserId: input.operation.requestedByUserId,
+          summary: null,
+          errorSummary: null,
+        },
+      })
+      return { vmInstance: vmRow, operation: opRow }
+    })
+    return {
+      vmInstance: mapPrismaVmInstance(result.vmInstance),
+      operation: mapPrismaOperation(result.operation),
+    }
   }
 
   async updateOperation(

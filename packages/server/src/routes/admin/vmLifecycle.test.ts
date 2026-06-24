@@ -289,6 +289,35 @@ class FakeVmLifecycleStore implements VmLifecycleStore {
     return op
   }
 
+  async createVmInstanceAndQueuedOperation(input: {
+    vmInstance: {
+      id: string
+      name: string
+      endpointId: string
+      projectId: string
+      tenantId: string
+      networkPoolId: string | null
+      imageReference: string
+      cpuCount: number
+      memoryBytes: bigint
+      rootDiskBytes: bigint
+      addressFamily: VmAddressFamily
+      status: VmInstanceStatus
+    }
+    operation: { action: VmLifecycleAction; requestedByUserId: string }
+  }): Promise<{ vmInstance: PersistedVmInstance; operation: PersistedVmLifecycleOperation }> {
+    // Fake store: persist both rows sequentially (no DB); mirrors the
+    // atomic Prisma implementation for test purposes.
+    const vmInstance = await this.createVmInstance(input.vmInstance)
+    const operation = await this.createOperation({
+      vmInstanceId: vmInstance.id,
+      action: input.operation.action,
+      status: "QUEUED",
+      requestedByUserId: input.operation.requestedByUserId,
+    })
+    return { vmInstance, operation }
+  }
+
   async updateOperation(
     operationId: string,
     input: { status: VmLifecycleOperationStatus; summary?: string | null; errorSummary?: string | null }
@@ -311,9 +340,11 @@ class FakeVmLifecycleStore implements VmLifecycleStore {
     limit: number
     offset: number
   }): Promise<{ entries: PersistedVmLifecycleOperation[]; total: number }> {
-    const all = [...this.operations.values()].sort(
-      (a, b) => b.createdAt.getTime() - a.createdAt.getTime()
-    )
+    const all = [...this.operations.values()].sort((a, b) => {
+      const byCreated = b.createdAt.getTime() - a.createdAt.getTime()
+      if (byCreated !== 0) return byCreated
+      return b.id < a.id ? -1 : b.id > a.id ? 1 : 0
+    })
     const filtered = all.filter((o) => {
       if (query.vmInstanceId && o.vmInstanceId !== query.vmInstanceId) return false
       if (query.action && o.action !== query.action) return false
@@ -842,6 +873,68 @@ describe("admin VM lifecycle routes", () => {
     })
     assert.equal(res.status, 400)
     assert.equal((await readJson(res)).error.code, "VM_INVALID_REQUEST")
+  })
+
+  test("rejects a new action while another lifecycle operation is running (409 VM_CONFLICT)", async () => {
+    const store = new FakeVmLifecycleStore()
+    const agent = new StubAgentClient()
+    agent.nextBody = { status: "PROVISIONING" }
+    const routes = buildRoutes(store, agent)
+    const created = await routes.request("/vms", {
+      method: "POST",
+      body: JSON.stringify(baseCreateBody),
+      headers: jsonHeaders(sessionCookie(globalAdmin)),
+    })
+    const vmId = (await readJson(created)).vm.id
+
+    // Seed an inflight RUNNING operation directly so the probe sees it.
+    await store.createOperation({
+      vmInstanceId: vmId,
+      action: "STOP",
+      status: "RUNNING",
+      requestedByUserId: globalAdmin.id,
+    })
+
+    const startRes = await routes.request(`/vms/${vmId}/start`, {
+      method: "POST",
+      headers: { cookie: sessionCookie(globalAdmin) },
+    })
+    assert.equal(startRes.status, 409)
+    assert.equal((await readJson(startRes)).error.code, "VM_CONFLICT")
+
+    // The agent must never have been called for the rejected action.
+    assert.equal(agent.requests.length, 1, "only the create agent call should have occurred")
+  })
+
+  test("rejects a new action while another lifecycle operation is queued (409 VM_CONFLICT)", async () => {
+    const store = new FakeVmLifecycleStore()
+    const agent = new StubAgentClient()
+    agent.nextBody = { status: "PROVISIONING" }
+    const routes = buildRoutes(store, agent)
+    const created = await routes.request("/vms", {
+      method: "POST",
+      body: JSON.stringify(baseCreateBody),
+      headers: jsonHeaders(sessionCookie(globalAdmin)),
+    })
+    const vmId = (await readJson(created)).vm.id
+    store.vms.get(vmId)!.status = "STOPPED"
+
+    await store.createOperation({
+      vmInstanceId: vmId,
+      action: "START",
+      status: "QUEUED",
+      requestedByUserId: globalAdmin.id,
+    })
+
+    // START is state-compatible with STOPPED, so the inflight probe is the
+    // only guard that fires here.
+    const startRes = await routes.request(`/vms/${vmId}/start`, {
+      method: "POST",
+      headers: { cookie: sessionCookie(globalAdmin) },
+    })
+    assert.equal(startRes.status, 409)
+    assert.equal((await readJson(startRes)).error.code, "VM_CONFLICT")
+    assert.equal(agent.requests.length, 1)
   })
 
   test("rejects invalid create body with 400", async () => {

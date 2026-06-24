@@ -245,6 +245,33 @@ class FakeStore implements VmLifecycleStore {
     return op
   }
 
+  async createVmInstanceAndQueuedOperation(input: {
+    vmInstance: {
+      id: string
+      name: string
+      endpointId: string
+      projectId: string
+      tenantId: string
+      networkPoolId: string | null
+      imageReference: string
+      cpuCount: number
+      memoryBytes: bigint
+      rootDiskBytes: bigint
+      addressFamily: VmAddressFamily
+      status: VmInstanceStatus
+    }
+    operation: { action: VmLifecycleAction; requestedByUserId: string }
+  }): Promise<{ vmInstance: PersistedVmInstance; operation: PersistedVmLifecycleOperation }> {
+    const vmInstance = await this.createVmInstance(input.vmInstance)
+    const operation = await this.createOperation({
+      vmInstanceId: vmInstance.id,
+      action: input.operation.action,
+      status: "QUEUED",
+      requestedByUserId: input.operation.requestedByUserId,
+    })
+    return { vmInstance, operation }
+  }
+
   async updateOperation(
     operationId: string,
     input: { status: VmLifecycleOperationStatus; summary?: string | null; errorSummary?: string | null }
@@ -264,7 +291,11 @@ class FakeStore implements VmLifecycleStore {
     limit: number
     offset: number
   }): Promise<{ entries: PersistedVmLifecycleOperation[]; total: number }> {
-    const all = [...this.operations.values()]
+    const all = [...this.operations.values()].sort((a, b) => {
+      const byCreated = b.createdAt.getTime() - a.createdAt.getTime()
+      if (byCreated !== 0) return byCreated
+      return b.id < a.id ? -1 : b.id > a.id ? 1 : 0
+    })
     const filtered = all.filter((o) => {
       if (query.vmInstanceId && o.vmInstanceId !== query.vmInstanceId) return false
       if (query.action && o.action !== query.action) return false
@@ -555,6 +586,60 @@ describe("vmLifecycle service", () => {
       ),
       /not found/i
     )
+  })
+
+  test("performVmAction rejects a new action while a RUNNING operation is inflight and never calls the agent", async () => {
+    const store = new FakeStore()
+    const agent = new RecordingAgentClient()
+    agent.nextBody = { status: "PROVISIONING" }
+    const created = await createVm(store, admin, baseCreate, actionOptions(agent))
+    const vmId = created.vm.id
+    // Seed an inflight RUNNING operation so the inflight probe sees it.
+    await store.createOperation({
+      vmInstanceId: vmId,
+      action: "STOP",
+      status: "RUNNING",
+      requestedByUserId: admin.id,
+    })
+    const secondAgent = new RecordingAgentClient()
+    await assertRejects(
+      performVmAction(
+        store,
+        admin,
+        { vmInstanceId: vmId, action: "START" },
+        actionOptions(secondAgent)
+      ),
+      /operation is already running|conflict/i
+    )
+    assert.equal(secondAgent.requests.length, 0, "agent must not be called while an operation is inflight")
+  })
+
+  test("performVmAction rejects a new action while a QUEUED operation is inflight", async () => {
+    const store = new FakeStore()
+    const agent = new RecordingAgentClient()
+    agent.nextBody = { status: "PROVISIONING" }
+    const created = await createVm(store, admin, baseCreate, actionOptions(agent))
+    const vmId = created.vm.id
+    store.vms.get(vmId)!.status = "STOPPED"
+    await store.createOperation({
+      vmInstanceId: vmId,
+      action: "START",
+      status: "QUEUED",
+      requestedByUserId: admin.id,
+    })
+    const secondAgent = new RecordingAgentClient()
+    // START is state-compatible with STOPPED, so the inflight probe is the
+    // only guard that fires here.
+    await assertRejects(
+      performVmAction(
+        store,
+        admin,
+        { vmInstanceId: vmId, action: "START" },
+        actionOptions(secondAgent)
+      ),
+      /operation is already running|conflict/i
+    )
+    assert.equal(secondAgent.requests.length, 0)
   })
 
   test("performVmAction DELETE records FAILED op but still soft-deletes when the agent is unavailable", async () => {
