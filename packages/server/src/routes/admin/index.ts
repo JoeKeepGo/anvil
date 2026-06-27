@@ -9,6 +9,7 @@ import { createProjectRoutes } from "./projects"
 import { createTeamRoutes } from "./teams"
 import { createTenantRoutes } from "./tenants"
 import { createUserRoutes } from "./users"
+import { createVmLifecycleRoutes } from "./vmLifecycle"
 import type { AdminDataStore } from "../../services/admin/session"
 
 export interface AdminRoutesOptions {
@@ -33,6 +34,7 @@ export function createAdminRoutes(options: AdminRoutesOptions) {
   routes.route("/teams", createTeamRoutes())
   routes.route("/tenants", createTenantRoutes())
   routes.route("/users", createUserRoutes())
+  routes.route("/", createVmLifecycleRoutes({ sessionStore: options.store, env: options.env }))
 
   return routes
 }
