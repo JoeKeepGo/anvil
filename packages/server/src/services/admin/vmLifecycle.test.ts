@@ -172,6 +172,15 @@ class FakeStore implements VmLifecycleStore {
     return this.projectTenantQuota
   }
   async getVmUsage(): Promise<PolicyVmUsage> {
+    const live = [...this.vms.values()].filter((vm) => vm.status !== "DELETED")
+    if (live.length > 0) {
+      return {
+        instanceCount: live.length,
+        totalVcpu: live.reduce((sum, vm) => sum + vm.cpuCount, 0),
+        totalMemoryBytes: live.reduce((sum, vm) => sum + Number(vm.memoryBytes), 0),
+        totalDiskBytes: live.reduce((sum, vm) => sum + Number(vm.rootDiskBytes), 0),
+      }
+    }
     return this.vmUsage
   }
   async getVmInstance(vmInstanceId: string): Promise<PolicyVmInstance | null> {
@@ -791,25 +800,62 @@ describe("vmLifecycle service", () => {
     assert.equal(secondAgent.requests.length, 0)
   })
 
-  test("performVmAction DELETE records FAILED op but still soft-deletes when the agent is unavailable", async () => {
+  test("performVmAction DELETE keeps the VM visible and quota-counted when the agent is unavailable", async () => {
     const store = new FakeStore()
     const agent = new RecordingAgentClient()
     agent.nextBody = agentOperation("create")
     const created = await createVm(store, admin, baseCreate, actionOptions(agent))
     const vmId = created.vm.id
+    const originalStatus = store.vms.get(vmId)!.status
     agent.nextThrow = new AgentTimeoutError("slow agent")
     await assertRejects(
       performVmAction(store, admin, { vmInstanceId: vmId, action: "DELETE" }, actionOptions(agent)),
       /unavailable/i
     )
-    assert.equal(store.vms.get(vmId)!.status, "DELETED")
+    assert.equal(store.vms.get(vmId)!.status, "FAILED")
+    assert.notEqual(store.vms.get(vmId)!.status, "DELETED")
+    assert.notEqual(store.vms.get(vmId)!.status, originalStatus)
+
+    const listed = await listVms(store, admin)
+    assert.equal(listed.some((vm) => vm.id === vmId && vm.status === "FAILED"), true)
+    assert.deepEqual(await store.raceCreateVm({ endpointId: "endpoint-1", name: baseCreate.name }), {
+      conflict: true,
+    })
+    assert.deepEqual(await store.getVmUsage(), {
+      instanceCount: 1,
+      totalVcpu: baseCreate.cpuCount,
+      totalMemoryBytes: baseCreate.memoryBytes,
+      totalDiskBytes: baseCreate.rootDiskBytes,
+    })
+    store.projectQuota = {
+      maxVcpu: null,
+      maxMemoryBytes: null,
+      maxDiskBytes: null,
+      maxInstances: 1,
+    }
+    const agentRequestCountAfterFailedDelete = agent.requests.length
+    await assertRejects(
+      createVm(
+        store,
+        admin,
+        { ...baseCreate, name: "vm-after-failed-delete" },
+        actionOptions(agent)
+      ),
+      /denied|invalid/i
+    )
+    assert.equal(agent.requests.length, agentRequestCountAfterFailedDelete)
     const delOp = [...store.operations.values()].find(
       (o) => o.action === "DELETE" && o.vmInstanceId === vmId
     )
     assert.equal(delOp!.status, "FAILED")
+    assert.ok(delOp!.errorSummary)
     // Failed audit still recorded, and never carries agent payload.
     const serialized = JSON.stringify(store.auditEntries)
     assert.equal(serialized.includes("slow agent"), false)
+    const failedDeleteAudit = store.auditEntries.find(
+      (entry) => entry.action === "vm.delete" && entry.metadata?.status === "FAILED"
+    )
+    assert.ok(failedDeleteAudit)
   })
 
   test("performVmAction rejects a MEMBER principal without an agent call", async () => {
