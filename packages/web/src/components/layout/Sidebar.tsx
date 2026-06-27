@@ -7,6 +7,7 @@ import {
   KeyRound,
   LayoutDashboard,
   LogOut,
+  Monitor,
   Network,
   PanelsTopLeft,
   Server,
@@ -69,6 +70,12 @@ const adminNavItems: AdminNavItem[] = [
     label: "Projects",
     enabled: (access: AdminAccessSummary) =>
       hasAnyGlobalAction(access, ["projects:read", "projects:write"]),
+  },
+  {
+    to: "/admin/vms",
+    icon: Monitor,
+    label: "VMs",
+    enabled: (access: AdminAccessSummary) => hasAnyGlobalAction(access, ["vm:read"]),
   },
   { to: "/admin/permissions", icon: ClipboardList, label: "Permissions" },
   { to: "/admin/audit", icon: Activity, label: "Audit" },

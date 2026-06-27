@@ -2,6 +2,7 @@ import { Link, useOutletContext } from "react-router-dom"
 import {
   ClipboardList,
   KeyRound,
+  Monitor,
   Network,
   PanelsTopLeft,
   Server,
@@ -74,6 +75,14 @@ const sections = [
     icon: PanelsTopLeft,
     enabled: (context: AppShellContext) =>
       hasAnyGlobalAction(context.session.access, ["projects:read", "projects:write"]),
+  },
+  {
+    to: "/admin/vms",
+    title: "VMs",
+    detail: "Provision and manage tenant-scoped VM lifecycle instances.",
+    icon: Monitor,
+    enabled: (context: AppShellContext) =>
+      hasAnyGlobalAction(context.session.access, ["vm:read"]),
   },
   {
     to: "/admin/permissions",

@@ -135,6 +135,12 @@ export type GlobalAction =
   | "network:read"
   | "network:write"
   | "network:apply"
+  | "vm:read"
+  | "vm:create"
+  | "vm:start"
+  | "vm:stop"
+  | "vm:restart"
+  | "vm:delete"
 
 export type TeamAction =
   | "members:read"
@@ -634,4 +640,76 @@ export interface AdminNetworkStateSnapshot {
 export interface AdminNetworkSyncResponse {
   fabricId: string
   endpoints: AdminNetworkSyncEndpointResult[]
+}
+
+// M13 VM lifecycle types. These mirror the browser-safe backend contract:
+// BrowserVmInstance and BrowserVmLifecycleOperation never carry agent tokens,
+// Incus internals, or endpoint credentials.
+export type VmInstanceStatus = "PROVISIONING" | "RUNNING" | "STOPPED" | "FAILED" | "DELETED"
+export type VmLifecycleAction = "CREATE" | "START" | "STOP" | "RESTART" | "DELETE"
+export type VmLifecycleOperationStatus = "QUEUED" | "RUNNING" | "SUCCEEDED" | "FAILED" | "CANCELLED"
+export type VmAddressFamily = "IPV4" | "IPV6" | "DUAL"
+
+export interface BrowserVmLimits {
+  cpu: number
+  memoryBytes: number
+  rootDiskBytes: number
+}
+
+export interface BrowserVmNetwork {
+  poolId: string | null
+  addressFamily: VmAddressFamily
+}
+
+export interface BrowserVmInstance {
+  id: string
+  name: string
+  endpointId: string
+  projectId: string
+  tenantId: string
+  imageReference: string
+  status: VmInstanceStatus
+  limits: BrowserVmLimits
+  network: BrowserVmNetwork
+  createdAt: string
+  updatedAt: string
+}
+
+export interface BrowserVmLifecycleOperation {
+  id: string
+  vmInstanceId: string
+  action: VmLifecycleAction
+  status: VmLifecycleOperationStatus
+  requestedByUserId: string
+  summary: string | null
+  errorSummary: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface CreateVmResult {
+  vm: BrowserVmInstance
+  operation: BrowserVmLifecycleOperation
+}
+
+export type PerformVmActionResult = CreateVmResult
+
+export interface CreateVmInput {
+  name: string
+  endpointId: string
+  projectId: string
+  tenantId: string
+  networkPoolId: string | null
+  imageReference: string
+  cpuCount: number
+  memoryBytes: number
+  rootDiskBytes: number
+  addressFamily?: VmAddressFamily
+}
+
+export interface VmQuery {
+  projectId?: string
+  tenantId?: string
+  endpointId?: string
+  status?: VmInstanceStatus
 }

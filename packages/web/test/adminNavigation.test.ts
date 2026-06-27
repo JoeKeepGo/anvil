@@ -10,6 +10,10 @@ const adminHostsSource = readOptionalSource("../src/pages/admin/AdminHosts.tsx")
 const adminHostsAccessSource = readOptionalSource("../src/pages/admin/AdminHosts.access.ts")
 const adminNetworkSource = readOptionalSource("../src/pages/admin/AdminNetwork.tsx")
 const adminNetworkAccessSource = readOptionalSource("../src/pages/admin/AdminNetwork.access.ts")
+const adminVmsSource = readOptionalSource("../src/pages/admin/AdminVms.tsx")
+const adminVmDetailSource = readOptionalSource("../src/pages/admin/AdminVmDetail.tsx")
+const adminVmCreateSource = readOptionalSource("../src/pages/admin/AdminVmCreate.tsx")
+const adminVmsAccessSource = readOptionalSource("../src/pages/admin/AdminVms.access.ts")
 
 describe("M10 admin navigation", () => {
   test("exposes tenants and projects in the admin sidebar", () => {
@@ -151,6 +155,123 @@ describe("M12 admin network navigation", () => {
     assert.notEqual(networkFetchIndex, -1)
     assert.equal(readCheckIndex < networkFetchIndex, true)
     assert.match(adminNetworkSource, /useApi\(fetchAdminNetworkFabrics,\s*\{\s*enabled:\s*canRead\s*\}\)/)
+  })
+})
+
+describe("M13 admin VM lifecycle navigation", () => {
+  test("exposes VMs in admin sidebar and overview through vm:read capability", () => {
+    assert.match(sidebarSource, /to: "\/admin\/vms"/)
+    assert.match(sidebarSource, /vm:read/)
+    assert.match(overviewSource, /to: "\/admin\/vms"/)
+    assert.match(overviewSource, /vm:read/)
+  })
+
+  test("mounts VM list, create, and detail admin routes", () => {
+    assert.match(appSource, /AdminVms/)
+    assert.match(appSource, /AdminVmDetail/)
+    assert.match(appSource, /AdminVmCreate/)
+    assert.match(appSource, /path="vms"/)
+    assert.match(appSource, /path="vms\/create"/)
+    assert.match(appSource, /path="vms\/:vmId"/)
+  })
+
+  test("keeps VM lifecycle pages in browser-safe scope with no Agent/Incus/tunnel access", () => {
+    const allVmSources = `${adminVmsSource}\n${adminVmDetailSource}\n${adminVmCreateSource}\n${adminVmsAccessSource}`
+
+    assert.match(adminVmsSource, /fetchAdminVms/)
+    assert.match(adminVmDetailSource, /fetchAdminVm/)
+    assert.match(adminVmDetailSource, /fetchAdminVmOperations/)
+    assert.match(adminVmCreateSource, /createAdminVm/)
+    assert.match(allVmSources, /vm:read/)
+    assert.match(allVmSources, /vm:create/)
+
+    for (const forbidden of [
+      "tokenCiphertext",
+      "privateKeyCiphertext",
+      "presharedKeyCiphertext",
+      "agent token",
+      "endpoint token",
+      "/1.0/",
+      "ws://",
+      "wss://",
+      "19090",
+      "19095",
+      "/agent/v1",
+      "/var/lib/incus",
+      "rawIncus",
+      "anvil_session",
+      "passwordHash",
+    ]) {
+      assert.equal(
+        allVmSources.includes(forbidden),
+        false,
+        `VM lifecycle source contains forbidden scope: ${forbidden}`
+      )
+    }
+  })
+
+  test("admin VMs list page does not fetch before vm:read capability is available", () => {
+    const readCheckIndex = adminVmsSource.indexOf("const canRead")
+    const vmFetchIndex = adminVmsSource.indexOf("useApi(fetchAdminVms")
+
+    assert.notEqual(readCheckIndex, -1)
+    assert.notEqual(vmFetchIndex, -1)
+    assert.equal(readCheckIndex < vmFetchIndex, true)
+    assert.match(adminVmsSource, /useMemo\(\(\) => \(\{\s*enabled:\s*canRead\s*\}\), \[canRead\]\)/)
+    assert.match(adminVmsSource, /useApi\(fetchAdminVms,\s*useApiOptions\)/)
+  })
+
+  test("admin VM pages pass stable fetchers to useApi", () => {
+    assert.equal(adminVmsSource.includes("useApi(() => fetchAdminVms"), false)
+    assert.equal(adminVmDetailSource.includes("useApi(() => fetchAdminVm"), false)
+    assert.equal(adminVmDetailSource.includes("useApi(() => fetchAdminVmOperations"), false)
+    assert.equal(adminVmCreateSource.includes("useApi(() => fetchAdminTenants"), false)
+    assert.equal(adminVmCreateSource.includes("useApi(() => fetchAdminProjects"), false)
+    assert.equal(adminVmCreateSource.includes("useApi(() => fetchAdminEndpoints"), false)
+    assert.equal(
+      adminVmCreateSource.includes("useApi(() => fetchAdminProjectNetworkPools"),
+      false
+    )
+    assert.match(adminVmDetailSource, /useCallback\(\(\) => fetchAdminVm\(vmId!\), \[vmId\]\)/)
+    assert.match(
+      adminVmDetailSource,
+      /useCallback\(\(\) => fetchAdminVmOperations\(vmId\), \[vmId\]\)/
+    )
+  })
+
+  test("admin VM create page aligns quota and network denials with Phase 4 VM_INVALID_REQUEST", () => {
+    assert.match(adminVmCreateSource, /error\.code !== "VM_INVALID_REQUEST"/)
+    assert.match(adminVmCreateSource, /QUOTA_EXCEEDED/)
+    assert.match(adminVmCreateSource, /TENANT_ALLOCATION_EXCEEDED/)
+    assert.match(adminVmCreateSource, /NETWORK_POOL_UNAVAILABLE/)
+    assert.equal(adminVmCreateSource.includes("VM_QUOTA_DENIED"), false)
+    assert.equal(adminVmCreateSource.includes("VM_NETWORK_UNAVAILABLE"), false)
+  })
+
+  test("admin VM create page avoids empty Radix select item values", () => {
+    assert.equal(adminVmCreateSource.includes('SelectItem value=""'), false)
+  })
+
+  test("admin VM detail page conditionally gates lifecycle controls with granular permissions", () => {
+    assert.match(adminVmDetailSource, /canStartVm/)
+    assert.match(adminVmDetailSource, /canStopVm/)
+    assert.match(adminVmDetailSource, /canRestartVm/)
+    assert.match(adminVmDetailSource, /canDeleteVm/)
+    assert.match(adminVmDetailSource, /performVmAction/)
+    assert.match(adminVmDetailSource, /deleteAdminVm/)
+    assert.match(adminVmDetailSource, /ConfirmDialog/)
+
+    // Allowed actions by status
+    assert.match(adminVmDetailSource, /STOPPED:.*START.*DELETE/)
+    assert.match(adminVmDetailSource, /RUNNING:.*STOP.*RESTART/)
+    assert.match(adminVmDetailSource, /FAILED:.*DELETE/)
+  })
+
+  test("admin VM create page references reference data APIs", () => {
+    assert.match(adminVmCreateSource, /fetchAdminTenants/)
+    assert.match(adminVmCreateSource, /fetchAdminProjects/)
+    assert.match(adminVmCreateSource, /fetchAdminEndpoints/)
+    assert.match(adminVmCreateSource, /fetchAdminProjectNetworkPools/)
   })
 })
 

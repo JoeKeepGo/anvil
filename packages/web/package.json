@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "test": "node --import tsx --test \"test/**/*.test.ts\"",
+    "test": "TSX_TSCONFIG_PATH=tsconfig.app.json node --import tsx --test \"test/**/*.test.ts\"",
     "typecheck": "tsc -b --noEmit",
     "lint": "eslint .",
     "format": "prettier --write .",
@@ -28,8 +28,10 @@
   "devDependencies": {
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
+    "@types/react-test-renderer": "^19.1.0",
     "@vitejs/plugin-react": "^6.0.1",
     "prettier": "^3.8.3",
+    "react-test-renderer": "19.2.5",
     "tsx": "^4.0.0",
     "typescript": "~6.0.2",
     "vite": "^8.0.10"
