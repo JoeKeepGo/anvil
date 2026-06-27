@@ -236,7 +236,7 @@ export interface VmLifecycleAgentRequestPayload {
 export interface VmLifecycleAgentResponsePayload {
   action: Exclude<VmLifecycleAction, "CREATE"> | "CREATE"
   instanceName: string
-  agentStatus: "operation-accepted" | "sync-ok"
+  agentStatus: "operation-completed" | "sync-ok"
   operationId: string
   operationKind: "async" | "sync"
   summary: string
@@ -888,14 +888,14 @@ function normalizeAgentLifecycleResponse(
   if (candidate.action !== expectedAction || candidate.instance !== payload.instanceName) {
     throw new VmLifecycleMalformedAgentResponseError()
   }
-  if (candidate.status !== "operation-accepted" && candidate.status !== "sync-ok") {
+  if (candidate.status !== "operation-completed" && candidate.status !== "sync-ok") {
     throw new VmLifecycleMalformedAgentResponseError()
   }
   if (candidate.operationKind !== "async" && candidate.operationKind !== "sync") {
     throw new VmLifecycleMalformedAgentResponseError()
   }
   if (
-    (candidate.status === "operation-accepted" && candidate.operationKind !== "async") ||
+    (candidate.status === "operation-completed" && candidate.operationKind !== "async") ||
     (candidate.status === "sync-ok" && candidate.operationKind !== "sync")
   ) {
     throw new VmLifecycleMalformedAgentResponseError()

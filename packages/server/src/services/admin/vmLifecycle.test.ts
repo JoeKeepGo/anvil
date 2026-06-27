@@ -104,14 +104,14 @@ function readyHostState(overrides: Partial<VmLifecycleHostReadiness> = {}): VmLi
 function agentOperation(
   action: "create" | "start" | "stop" | "restart" | "delete",
   instance = "vm-1",
-  status: "operation-accepted" | "sync-ok" = "operation-accepted"
+  status: "operation-completed" | "sync-ok" | "operation-accepted" = "operation-completed"
 ) {
   return {
     action,
     instance,
     status,
-    operationId: status === "operation-accepted" ? `agent-${action}-operation` : "",
-    operationKind: status === "operation-accepted" ? "async" : "sync",
+    operationId: status === "sync-ok" ? "" : `agent-${action}-operation`,
+    operationKind: status === "sync-ok" ? "sync" : "async",
   }
 }
 
@@ -409,6 +409,30 @@ describe("vmLifecycle service", () => {
     assert.equal(store.auditEntries.length, 2)
     assert.equal(store.auditEntries[0].metadata?.status, "QUEUED")
     assert.equal(store.auditEntries[1].metadata?.status, "SUCCEEDED")
+  })
+
+  test("createVm does not mark operation SUCCEEDED for old operation-accepted agent responses", async () => {
+    const store = new FakeStore()
+    const agent = new RecordingAgentClient()
+    agent.nextBody = agentOperation("create", "vm-1", "operation-accepted")
+
+    await assertRejects(
+      createVm(store, admin, baseCreate, actionOptions(agent)),
+      /malformed|not terminal|Agent lifecycle response is malformed/i
+    )
+
+    const vm = [...store.vms.values()].find((record) => record.name === "vm-1")
+    assert.ok(vm)
+    assert.equal(vm!.status, "FAILED")
+    const createOp = [...store.operations.values()].find((operation) => operation.action === "CREATE")
+    assert.ok(createOp)
+    assert.equal(createOp!.status, "FAILED")
+    assert.notEqual(createOp!.status, "SUCCEEDED")
+    assert.ok(createOp!.errorSummary)
+    assert.equal(
+      store.auditEntries.some((entry) => entry.action === "vm.create" && entry.metadata?.status === "SUCCEEDED"),
+      false
+    )
   })
 
   test("lifecycle actions use accepted Phase 3 agent paths and payloads", async () => {

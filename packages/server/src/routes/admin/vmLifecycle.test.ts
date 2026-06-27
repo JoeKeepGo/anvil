@@ -118,14 +118,14 @@ function readyHostState(overrides: Partial<VmLifecycleHostReadiness> = {}): VmLi
 function agentOperation(
   action: "create" | "start" | "stop" | "restart" | "delete",
   instance = "vm-1",
-  status: "operation-accepted" | "sync-ok" = "operation-accepted"
+  status: "operation-completed" | "sync-ok" | "operation-accepted" = "operation-completed"
 ) {
   return {
     action,
     instance,
     status,
-    operationId: status === "operation-accepted" ? `agent-${action}-operation` : "",
-    operationKind: status === "operation-accepted" ? "async" : "sync",
+    operationId: status === "sync-ok" ? "" : `agent-${action}-operation`,
+    operationKind: status === "sync-ok" ? "sync" : "async",
   }
 }
 
@@ -538,7 +538,7 @@ describe("admin VM lifecycle routes", () => {
     assert.equal(body.vm.network.addressFamily, "IPV4")
     assert.equal(body.operation.action, "CREATE")
     assert.equal(body.operation.status, "SUCCEEDED")
-    assert.equal(body.operation.summary, "create operation-accepted (agent-create-operation)")
+    assert.equal(body.operation.summary, "create operation-completed (agent-create-operation)")
 
     // Agent was called after policy passes with the lifecycle protocol path.
     assert.equal(agent.requests.length, 1)
@@ -726,6 +726,33 @@ describe("admin VM lifecycle routes", () => {
     assert.equal((await readJson(res)).error.code, "VM_AGENT_MALFORMED")
     const failedOp = [...store.operations.values()].find((o) => o.action === "CREATE")
     assert.equal(failedOp!.status, "FAILED")
+  })
+
+  test("does not report create success for old operation-accepted agent responses", async () => {
+    const store = new FakeVmLifecycleStore()
+    const agent = new StubAgentClient()
+    agent.nextBody = agentOperation("create", "vm-1", "operation-accepted")
+    const routes = buildRoutes(store, agent)
+
+    const res = await routes.request("/vms", {
+      method: "POST",
+      body: JSON.stringify(baseCreateBody),
+      headers: jsonHeaders(sessionCookie(globalAdmin)),
+    })
+
+    assert.equal(res.status, 502)
+    assert.equal((await readJson(res)).error.code, "VM_AGENT_MALFORMED")
+    const vm = [...store.vms.values()].find((record) => record.name === "vm-1")
+    assert.ok(vm)
+    assert.equal(vm!.status, "FAILED")
+    const failedOp = [...store.operations.values()].find((operation) => operation.action === "CREATE")
+    assert.ok(failedOp)
+    assert.equal(failedOp!.status, "FAILED")
+    assert.notEqual(failedOp!.status, "SUCCEEDED")
+    assert.equal(
+      store.auditEntries.some((entry) => entry.action === "vm.create" && entry.metadata?.status === "SUCCEEDED"),
+      false
+    )
   })
 
   test("starts a stopped VM, audits vm.start", async () => {
