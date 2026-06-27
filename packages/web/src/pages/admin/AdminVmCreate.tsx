@@ -30,6 +30,8 @@ import {
   formatError,
 } from "./adminPageUtils"
 
+const NO_NETWORK_POOL_VALUE = "__none__"
+
 export function AdminVmCreate() {
   const { session } = useOutletContext<AppShellContext>()
   const canWrite = canCreateVm(session.access)
@@ -273,15 +275,17 @@ export function AdminVmCreate() {
                 <div className="text-sm text-muted-foreground">Loading pools...</div>
               ) : (
                 <Select
-                  value={networkPoolId}
-                  onValueChange={setNetworkPoolId}
+                  value={networkPoolId || NO_NETWORK_POOL_VALUE}
+                  onValueChange={(value) =>
+                    setNetworkPoolId(value === NO_NETWORK_POOL_VALUE ? "" : value)
+                  }
                   disabled={submitting}
                 >
                   <SelectTrigger id="vm-pool">
                     <SelectValue placeholder="No pool (optional)" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">No pool</SelectItem>
+                    <SelectItem value={NO_NETWORK_POOL_VALUE}>No pool</SelectItem>
                     {pools.map((p) => (
                       <SelectItem key={p.id} value={p.id}>
                         {p.ipv4Cidr ?? p.ipv6Cidr ?? p.id}

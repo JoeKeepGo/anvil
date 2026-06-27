@@ -248,6 +248,10 @@ describe("M13 admin VM lifecycle navigation", () => {
     assert.equal(adminVmCreateSource.includes("VM_NETWORK_UNAVAILABLE"), false)
   })
 
+  test("admin VM create page avoids empty Radix select item values", () => {
+    assert.equal(adminVmCreateSource.includes('SelectItem value=""'), false)
+  })
+
   test("admin VM detail page conditionally gates lifecycle controls with granular permissions", () => {
     assert.match(adminVmDetailSource, /canStartVm/)
     assert.match(adminVmDetailSource, /canStopVm/)
