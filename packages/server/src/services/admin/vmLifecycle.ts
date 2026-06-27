@@ -16,11 +16,8 @@
 //      AFTER this transaction commits, outside it, and the operation then
 //      transitions RUNNING -> SUCCEEDED|FAILED.
 //   3. Only AFTER backend policy passes is the agent lifecycle protocol
-//      invoked. Wave 3 (agent Incus lifecycle protocol) is not yet shipped,
-//      so the agent call is routed through an injectable
-//      `VmLifecycleAgentClient` boundary. The default client throws
-//      `VmLifecycleAgentUnavailableError` so the service can be exercised in
-//      tests and records a FAILED operation + audit when Wave 3 is absent.
+//      invoked. The call is routed through the accepted Phase 3
+//      `VmLifecycleAgentClient` boundary.
 //   4. Every mutation records a redaction-safe audit entry
 //      (`buildVmLifecycleAuditMetadata`).
 //
@@ -129,6 +126,14 @@ export interface VmLifecycleEndpointForAgent {
   status: "ACTIVE" | "ARCHIVED"
 }
 
+export interface VmLifecycleHostReadiness {
+  endpointId: string
+  status: string
+  incusAvailable: boolean
+  capabilityVmLifecycle: boolean
+  lastSeenAt: Date | string
+}
+
 export interface VmLifecycleStore extends VmLifecyclePolicyStore {
   // Lifecycle persistence
   raceCreateVm(input: {
@@ -204,6 +209,8 @@ export interface VmLifecycleStore extends VmLifecyclePolicyStore {
   }): Promise<{ entries: PersistedVmLifecycleOperation[]; total: number }>
   // Endpoint fetch for agent calls
   getEndpointForAgent(endpointId: string): Promise<VmLifecycleEndpointForAgent | null>
+  // Latest HostState readiness for mutation gates
+  getLatestHostStateForEndpoint(endpointId: string): Promise<VmLifecycleHostReadiness | null>
   // Audit
   recordAudit(entry: AdminAuditEntry): Promise<void>
 }
@@ -227,18 +234,21 @@ export interface VmLifecycleAgentRequestPayload {
 }
 
 export interface VmLifecycleAgentResponsePayload {
-  status?: VmInstanceStatus
-  summary?: string
+  action: Exclude<VmLifecycleAction, "CREATE"> | "CREATE"
+  instanceName: string
+  agentStatus: "operation-accepted" | "sync-ok"
+  operationId: string
+  operationKind: "async" | "sync"
+  summary: string
 }
 
 export interface VmLifecycleActionOptions {
   env?: NodeJS.ProcessEnv
   createAgentClient?: (options: AgentClientOptions) => VmLifecycleAgentClient
   now?: () => Date
-  // When true, skip the live agent call and treat the lifecycle as accepted
-  // by the agent protocol. Used for runtime smoke / Wave 3-absent tests.
-  stubAgent?: boolean
 }
+
+export const VM_LIFECYCLE_HOST_STATE_FRESHNESS_MS = 15 * 60 * 1000
 
 // ---------------------------------------------------------------------------
 // Errors (stable names; route layer maps to safe HTTP codes)
@@ -320,6 +330,14 @@ export class VmLifecycleMalformedAgentResponseError extends VmLifecycleError {
   }
 }
 
+export class VmLifecycleHostNotReadyError extends VmLifecycleError {
+  readonly code = "VM_HOST_NOT_READY" as const
+  constructor(message: string) {
+    super(message)
+    this.name = "VmLifecycleHostNotReadyError"
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Public service functions
 // ---------------------------------------------------------------------------
@@ -349,6 +367,7 @@ export async function createVm(
     addressFamily: input.addressFamily,
   }
   await assertPolicyPasses(await evaluateVmCreatePolicy(store, policyInput))
+  await assertHostReadyForLifecycle(store, input.endpointId, options)
 
   // Duplicate-name guard under the (endpointId, name) unique constraint.
   const race = await store.raceCreateVm({
@@ -406,11 +425,10 @@ export async function createVm(
       network: { poolId: input.networkPoolId, addressFamily: input.addressFamily },
     }
     const agentResponse = await callAgentLifecycle(store, input.endpointId, agentPayload, options)
-    const nextStatus: VmInstanceStatus = agentResponse.status ?? "PROVISIONING"
-    const updatedInstance = await store.updateVmInstanceStatus(vmId, nextStatus)
+    const updatedInstance = await store.updateVmInstanceStatus(vmId, "PROVISIONING")
     const completedOperation = await store.updateOperation(operation.id, {
       status: "SUCCEEDED",
-      summary: agentResponse.summary ?? "create acknowledged by agent lifecycle protocol",
+      summary: agentResponse.summary,
     })
     await recordLifecycleAudit(store, actor, "vm.create", updatedInstance, completedOperation)
     return {
@@ -465,6 +483,7 @@ export async function performVmAction(
   ) {
     throw new VmLifecycleOperationConflictError()
   }
+  await assertHostReadyForLifecycle(store, existing.endpointId, options)
 
   const operation = await store.createOperation({
     vmInstanceId: input.vmInstanceId,
@@ -502,9 +521,7 @@ export async function performVmAction(
           },
           options
         )
-        if (agentResponse.summary) {
-          summary = agentResponse.summary
-        }
+        summary = agentResponse.summary
       } catch (error) {
         // Deletion records FAILED operation but still soft-deletes the VM so
         // the system isn't left with an undead record the agent can't reach.
@@ -546,12 +563,7 @@ export async function performVmAction(
       },
       options
     )
-    if (agentResponse.status) {
-      nextStatus = agentResponse.status
-    }
-    if (agentResponse.summary) {
-      summary = agentResponse.summary
-    }
+    summary = agentResponse.summary
     const finalStatus: VmInstanceStatus = nextStatus
     const updatedInstance = await store.updateVmInstanceStatus(
       input.vmInstanceId,
@@ -680,6 +692,34 @@ function assertVmCanPerformAction(status: VmInstanceStatus, action: Exclude<VmLi
   }
 }
 
+async function assertHostReadyForLifecycle(
+  store: VmLifecycleStore,
+  endpointId: string,
+  options: VmLifecycleActionOptions
+): Promise<void> {
+  const hostState = await store.getLatestHostStateForEndpoint(endpointId)
+  if (!hostState) {
+    throw new VmLifecycleHostNotReadyError("Host state is required before VM lifecycle mutations.")
+  }
+  const lastSeenAt =
+    hostState.lastSeenAt instanceof Date
+      ? hostState.lastSeenAt.getTime()
+      : Date.parse(hostState.lastSeenAt)
+  const now = (options.now?.() ?? new Date()).getTime()
+  if (!Number.isFinite(lastSeenAt) || now - lastSeenAt > VM_LIFECYCLE_HOST_STATE_FRESHNESS_MS) {
+    throw new VmLifecycleHostNotReadyError("Host state is stale before VM lifecycle mutation.")
+  }
+  if (hostState.status !== "ONLINE") {
+    throw new VmLifecycleHostNotReadyError("Host is not online for VM lifecycle mutations.")
+  }
+  if (!hostState.incusAvailable) {
+    throw new VmLifecycleHostNotReadyError("Incus is unavailable for VM lifecycle mutations.")
+  }
+  if (!hostState.capabilityVmLifecycle) {
+    throw new VmLifecycleHostNotReadyError("Host VM lifecycle capability is unavailable.")
+  }
+}
+
 function actionTargetStatus(action: Exclude<VmLifecycleAction, "CREATE">, current: VmInstanceStatus): VmInstanceStatus {
   switch (action) {
     case "START":
@@ -745,10 +785,6 @@ async function callAgentLifecycle(
   payload: VmLifecycleAgentRequestPayload,
   options: VmLifecycleActionOptions
 ): Promise<VmLifecycleAgentResponsePayload> {
-  if (options.stubAgent) {
-    // Wave 3 absent: stubbed agent lifecycle acceptance.
-    return { status: payload.action === "CREATE" ? "PROVISIONING" : agentStubStatus(payload.action), summary: undefined }
-  }
   const env = options.env ?? process.env
   const timeoutMs = parseRequestTimeout(env.ANVIL_AGENT_REQUEST_TIMEOUT_MS)
   const endpoint = await store.getEndpointForAgent(endpointId)
@@ -775,18 +811,15 @@ async function callAgentLifecycle(
   }
 
   try {
+    const request = buildAgentLifecycleRequest(payload)
     const response = await withAgentTimeout(
-      client.execute({
-        method: "POST",
-        path: "/agent/v1/vm/lifecycle",
-        body: payload,
-      }),
+      client.execute(request),
       timeoutMs
     )
     if (response.status < 200 || response.status >= 300) {
       throw new VmLifecycleMalformedAgentResponseError()
     }
-    return normalizeAgentLifecycleResponse(response.body, payload.action)
+    return normalizeAgentLifecycleResponse(response.body, payload)
   } catch (error) {
     if (
       error instanceof VmLifecycleMalformedAgentResponseError ||
@@ -808,53 +841,99 @@ async function callAgentLifecycle(
   }
 }
 
-function agentStubStatus(action: VmLifecycleAction): VmInstanceStatus {
+function buildAgentLifecycleRequest(payload: VmLifecycleAgentRequestPayload): AgentRequest {
+  switch (payload.action) {
+    case "CREATE":
+      return {
+        method: "POST",
+        path: "/agent/v1/lifecycle/instances/create",
+        body: {
+          name: payload.instanceName,
+          image: payload.imageReference,
+          cpuCount: payload.limits.cpuCount,
+          memoryBytes: payload.limits.memoryBytes,
+          rootDiskBytes: payload.limits.rootDiskBytes,
+        },
+      }
+    case "START":
+      return {
+        method: "POST",
+        path: `/agent/v1/lifecycle/instances/${encodeURIComponent(payload.instanceName)}/start`,
+      }
+    case "STOP":
+      return {
+        method: "POST",
+        path: `/agent/v1/lifecycle/instances/${encodeURIComponent(payload.instanceName)}/stop`,
+      }
+    case "RESTART":
+      return {
+        method: "POST",
+        path: `/agent/v1/lifecycle/instances/${encodeURIComponent(payload.instanceName)}/restart`,
+      }
+    case "DELETE":
+      return {
+        method: "POST",
+        path: `/agent/v1/lifecycle/instances/${encodeURIComponent(payload.instanceName)}/delete`,
+        body: { confirm: true },
+      }
+  }
+}
+
+function agentActionName(action: VmLifecycleAction): "create" | "start" | "stop" | "restart" | "delete" {
   switch (action) {
     case "CREATE":
-      return "PROVISIONING"
+      return "create"
     case "START":
-      return "RUNNING"
+      return "start"
     case "STOP":
-      return "STOPPED"
+      return "stop"
     case "RESTART":
-      return "RUNNING"
+      return "restart"
     case "DELETE":
-      return "DELETED"
+      return "delete"
   }
 }
 
 function normalizeAgentLifecycleResponse(
   body: unknown,
-  action: VmLifecycleAction
+  payload: VmLifecycleAgentRequestPayload
 ): VmLifecycleAgentResponsePayload {
   if (!body || typeof body !== "object") {
     throw new VmLifecycleMalformedAgentResponseError()
   }
   const candidate = body as Record<string, unknown>
-  const statusRaw = candidate.status
-  let status: VmInstanceStatus | undefined
-  if (typeof statusRaw === "string" && isVmInstanceStatus(statusRaw)) {
-    status = statusRaw
-  } else if (action !== "DELETE" && statusRaw === undefined) {
-    // Allow a bare ack body for non-delete actions; action default applies.
-    status = undefined
-  } else if (action === "DELETE" && statusRaw === undefined) {
-    status = "DELETED"
-  } else if (statusRaw !== undefined) {
+  const expectedAction = agentActionName(payload.action)
+  if (candidate.action !== expectedAction || candidate.instance !== payload.instanceName) {
     throw new VmLifecycleMalformedAgentResponseError()
   }
-  const summary = typeof candidate.summary === "string" ? candidate.summary : undefined
-  return { status, summary }
-}
-
-function isVmInstanceStatus(value: string): value is VmInstanceStatus {
-  return (
-    value === "PROVISIONING" ||
-    value === "RUNNING" ||
-    value === "STOPPED" ||
-    value === "FAILED" ||
-    value === "DELETED"
-  )
+  if (candidate.status !== "operation-accepted" && candidate.status !== "sync-ok") {
+    throw new VmLifecycleMalformedAgentResponseError()
+  }
+  if (candidate.operationKind !== "async" && candidate.operationKind !== "sync") {
+    throw new VmLifecycleMalformedAgentResponseError()
+  }
+  if (
+    (candidate.status === "operation-accepted" && candidate.operationKind !== "async") ||
+    (candidate.status === "sync-ok" && candidate.operationKind !== "sync")
+  ) {
+    throw new VmLifecycleMalformedAgentResponseError()
+  }
+  if (typeof candidate.operationId !== "string") {
+    throw new VmLifecycleMalformedAgentResponseError()
+  }
+  const operationId = candidate.operationId
+  const summary =
+    operationId.length > 0
+      ? `${expectedAction} ${candidate.status} (${operationId})`
+      : `${expectedAction} ${candidate.status}`
+  return {
+    action: payload.action,
+    instanceName: payload.instanceName,
+    agentStatus: candidate.status,
+    operationKind: candidate.operationKind,
+    operationId,
+    summary,
+  }
 }
 
 async function withAgentTimeout<T>(operation: Promise<T>, timeoutMs: number): Promise<T> {
@@ -924,6 +1003,7 @@ type VmLifecyclePrismaClient = Pick<
   | "vmInstance"
   | "vmLifecycleOperation"
   | "agentEndpoint"
+  | "hostState"
   | "auditLog"
   | "project"
   | "projectTenant"
@@ -1281,6 +1361,29 @@ export class PrismaVmLifecycleStore implements VmLifecycleStore {
       tokenCiphertext: row.tokenCiphertext ?? undefined,
       status: row.status,
     }
+  }
+
+  async getLatestHostStateForEndpoint(endpointId: string): Promise<VmLifecycleHostReadiness | null> {
+    this.assertDatabaseConfigured()
+    const row = await this.prisma.hostState.findUnique({
+      where: { endpointId },
+      select: {
+        endpointId: true,
+        status: true,
+        incusAvailable: true,
+        capabilityVmLifecycle: true,
+        lastSeenAt: true,
+      },
+    })
+    return row
+      ? {
+          endpointId: row.endpointId,
+          status: row.status,
+          incusAvailable: row.incusAvailable,
+          capabilityVmLifecycle: row.capabilityVmLifecycle,
+          lastSeenAt: row.lastSeenAt,
+        }
+      : null
   }
 
   async recordAudit(entry: AdminAuditEntry): Promise<void> {

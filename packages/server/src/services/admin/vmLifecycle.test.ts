@@ -16,6 +16,7 @@ import {
   type VmLifecycleActionOptions,
   type VmLifecycleAgentClient,
   type VmLifecycleEndpointForAgent,
+  type VmLifecycleHostReadiness,
   type VmLifecycleStore,
 } from "./vmLifecycle"
 import {
@@ -89,6 +90,31 @@ const baseCreate = {
   addressFamily: "IPV4" as VmAddressFamily,
 }
 
+function readyHostState(overrides: Partial<VmLifecycleHostReadiness> = {}): VmLifecycleHostReadiness {
+  return {
+    endpointId: "endpoint-1",
+    status: "ONLINE",
+    incusAvailable: true,
+    capabilityVmLifecycle: true,
+    lastSeenAt: now,
+    ...overrides,
+  }
+}
+
+function agentOperation(
+  action: "create" | "start" | "stop" | "restart" | "delete",
+  instance = "vm-1",
+  status: "operation-accepted" | "sync-ok" = "operation-accepted"
+) {
+  return {
+    action,
+    instance,
+    status,
+    operationId: status === "operation-accepted" ? `agent-${action}-operation` : "",
+    operationKind: status === "operation-accepted" ? "async" : "sync",
+  }
+}
+
 class FakeStore implements VmLifecycleStore {
   readonly vms = new Map<string, PersistedVmInstance>()
   readonly operations = new Map<string, PersistedVmLifecycleOperation>()
@@ -122,6 +148,7 @@ class FakeStore implements VmLifecycleStore {
     url: "ws://agent.example/agent",
     status: "ACTIVE",
   }
+  hostState: VmLifecycleHostReadiness | null = readyHostState()
 
   async getProject(): Promise<PolicyProject | null> {
     return this.project
@@ -312,6 +339,10 @@ class FakeStore implements VmLifecycleStore {
     return this.agentEndpoint
   }
 
+  async getLatestHostStateForEndpoint(): Promise<VmLifecycleHostReadiness | null> {
+    return this.hostState
+  }
+
   async recordAudit(entry: AdminAuditEntry): Promise<void> {
     this.auditEntries.push(entry)
   }
@@ -319,7 +350,7 @@ class FakeStore implements VmLifecycleStore {
 
 class RecordingAgentClient implements VmLifecycleAgentClient {
   requests: AgentRequest[] = []
-  nextBody: unknown = { status: "RUNNING" }
+  nextBody: unknown = agentOperation("create")
   nextThrow?: Error
   async execute(request: AgentRequest): Promise<AgentResponse> {
     this.requests.push(request)
@@ -349,18 +380,136 @@ describe("vmLifecycle service", () => {
   test("createVm invokes the agent ONLY after backend policy passes", async () => {
     const store = new FakeStore()
     const agent = new RecordingAgentClient()
-    agent.nextBody = { status: "PROVISIONING", summary: "ack" }
+    agent.nextBody = agentOperation("create")
     const result = await createVm(store, admin, baseCreate, actionOptions(agent))
 
     assert.equal(result.vm.status, "PROVISIONING")
     assert.equal(result.operation.action, "CREATE")
     assert.equal(result.operation.status, "SUCCEEDED")
     assert.equal(agent.requests.length, 1)
-    assert.equal(agent.requests[0].path, "/agent/v1/vm/lifecycle")
+    assert.equal(agent.requests[0].method, "POST")
+    assert.equal(agent.requests[0].path, "/agent/v1/lifecycle/instances/create")
+    assert.deepEqual(agent.requests[0].body, {
+      name: "vm-1",
+      image: "images/ubuntu/22.04",
+      cpuCount: 1,
+      memoryBytes: 268_435_456,
+      rootDiskBytes: 5_368_709_120,
+    })
     // Two audit entries: QUEUED then SUCCEEDED.
     assert.equal(store.auditEntries.length, 2)
     assert.equal(store.auditEntries[0].metadata?.status, "QUEUED")
     assert.equal(store.auditEntries[1].metadata?.status, "SUCCEEDED")
+  })
+
+  test("lifecycle actions use accepted Phase 3 agent paths and payloads", async () => {
+    const store = new FakeStore()
+    const agent = new RecordingAgentClient()
+    agent.nextBody = agentOperation("create")
+    const created = await createVm(store, admin, baseCreate, actionOptions(agent))
+    const vmId = created.vm.id
+
+    agent.nextBody = agentOperation("stop")
+    await performVmAction(store, admin, { vmInstanceId: vmId, action: "STOP" }, actionOptions(agent))
+    agent.nextBody = agentOperation("start")
+    await performVmAction(store, admin, { vmInstanceId: vmId, action: "START" }, actionOptions(agent))
+    agent.nextBody = agentOperation("restart")
+    await performVmAction(store, admin, { vmInstanceId: vmId, action: "RESTART" }, actionOptions(agent))
+    agent.nextBody = agentOperation("delete")
+    await performVmAction(store, admin, { vmInstanceId: vmId, action: "DELETE" }, actionOptions(agent))
+
+    const encodedName = encodeURIComponent("vm-1")
+    assert.equal(agent.requests.length, 5)
+    assert.equal(agent.requests[0].path, "/agent/v1/lifecycle/instances/create")
+    assert.equal(agent.requests[1].path, `/agent/v1/lifecycle/instances/${encodedName}/stop`)
+    assert.equal(agent.requests[1].body, undefined)
+    assert.equal(agent.requests[2].path, `/agent/v1/lifecycle/instances/${encodedName}/start`)
+    assert.equal(agent.requests[2].body, undefined)
+    assert.equal(agent.requests[3].path, `/agent/v1/lifecycle/instances/${encodedName}/restart`)
+    assert.equal(agent.requests[3].body, undefined)
+    assert.equal(agent.requests[4].path, `/agent/v1/lifecycle/instances/${encodedName}/delete`)
+    assert.deepEqual(agent.requests[4].body, { confirm: true })
+  })
+
+  test("agent operation statuses are accepted without treating them as VM runtime statuses", async () => {
+    const store = new FakeStore()
+    const agent = new RecordingAgentClient()
+    agent.nextBody = agentOperation("create", "vm-1", "sync-ok")
+    const created = await createVm(store, admin, baseCreate, actionOptions(agent))
+
+    assert.equal(created.vm.status, "PROVISIONING")
+    assert.equal(created.operation.status, "SUCCEEDED")
+    assert.match(created.operation.summary ?? "", /sync-ok/)
+  })
+
+  for (const scenario of [
+    {
+      name: "missing HostState",
+      hostState: null,
+      message: /host state is required/i,
+    },
+    {
+      name: "stale HostState",
+      hostState: readyHostState({ lastSeenAt: new Date("2026-06-23T23:44:59.999Z") }),
+      message: /host state is stale/i,
+    },
+    {
+      name: "offline HostState",
+      hostState: readyHostState({ status: "OFFLINE" }),
+      message: /host is not online/i,
+    },
+    {
+      name: "Incus unavailable HostState",
+      hostState: readyHostState({ incusAvailable: false }),
+      message: /incus is unavailable/i,
+    },
+    {
+      name: "vmLifecycle false HostState",
+      hostState: readyHostState({ capabilityVmLifecycle: false }),
+      message: /vm lifecycle capability/i,
+    },
+  ]) {
+    test(`createVm denies ${scenario.name} before operation creation or agent call`, async () => {
+      const store = new FakeStore()
+      store.hostState = scenario.hostState
+      const agent = new RecordingAgentClient()
+
+      await assertRejects(createVm(store, admin, baseCreate, actionOptions(agent)), scenario.message)
+
+      assert.equal(agent.requests.length, 0)
+      assert.equal(store.vms.size, 0)
+      assert.equal(store.operations.size, 0)
+      assert.equal(store.auditEntries.length, 0)
+    })
+  }
+
+  test("performVmAction denies stale HostState before operation creation or agent call", async () => {
+    const store = new FakeStore()
+    const vm = await store.createVmInstance({
+      id: "vm-existing",
+      name: "vm-1",
+      endpointId: "endpoint-1",
+      projectId: "project-1",
+      tenantId: "tenant-1",
+      networkPoolId: "pool-1",
+      imageReference: "images/ubuntu/22.04",
+      cpuCount: 1,
+      memoryBytes: BigInt(268_435_456),
+      rootDiskBytes: BigInt(5_368_709_120),
+      addressFamily: "IPV4",
+      status: "STOPPED",
+    })
+    store.hostState = readyHostState({ lastSeenAt: new Date("2026-06-23T23:44:59.999Z") })
+    const agent = new RecordingAgentClient()
+
+    await assertRejects(
+      performVmAction(store, admin, { vmInstanceId: vm.id, action: "START" }, actionOptions(agent)),
+      /host state is stale/i
+    )
+
+    assert.equal(agent.requests.length, 0)
+    assert.equal(store.operations.size, 0)
+    assert.equal(store.auditEntries.length, 0)
   })
 
   test("createVm denies a MEMBER principal without ever calling the agent", async () => {
@@ -434,7 +583,7 @@ describe("vmLifecycle service", () => {
   test("createVm with a duplicate name fails before any agent call", async () => {
     const store = new FakeStore()
     const agent = new RecordingAgentClient()
-    agent.nextBody = { status: "PROVISIONING" }
+    agent.nextBody = agentOperation("create")
     await createVm(store, admin, baseCreate, actionOptions(agent))
     const agent2 = new RecordingAgentClient()
     await assertRejects(
@@ -461,7 +610,7 @@ describe("vmLifecycle service", () => {
     assert.equal(store.auditEntries[1].metadata?.status, "FAILED")
     // No agent payload ever surfaces in audit metadata.
     const serialized = JSON.stringify(store.auditEntries)
-    assert.equal(serialized.includes("/agent/v1/vm/lifecycle"), false)
+    assert.equal(serialized.includes("/agent/v1/lifecycle/instances/create"), false)
     assert.equal(serialized.includes("socket refused"), false)
   })
 
@@ -480,13 +629,13 @@ describe("vmLifecycle service", () => {
   test("performVmAction START transitions to RUNNING and audits vm.start", async () => {
     const store = new FakeStore()
     const agent = new RecordingAgentClient()
-    agent.nextBody = { status: "PROVISIONING" }
+    agent.nextBody = agentOperation("create")
     const created = await createVm(store, admin, baseCreate, actionOptions(agent))
     const vmId = created.vm.id
     // Bring to STOPPED via stop, then start.
-    agent.nextBody = { status: "STOPPED" }
+    agent.nextBody = agentOperation("stop")
     await performVmAction(store, admin, { vmInstanceId: vmId, action: "STOP" }, actionOptions(agent))
-    agent.nextBody = { status: "RUNNING" }
+    agent.nextBody = agentOperation("start")
     const started = await performVmAction(
       store,
       admin,
@@ -504,7 +653,7 @@ describe("vmLifecycle service", () => {
   test("performVmAction RESTART on a STOPPED VM rejects with a status conflict", async () => {
     const store = new FakeStore()
     const agent = new RecordingAgentClient()
-    agent.nextBody = { status: "PROVISIONING" }
+    agent.nextBody = agentOperation("create")
     const created = await createVm(store, admin, baseCreate, actionOptions(agent))
     store.vms.get(created.vm.id)!.status = "STOPPED"
     await assertRejects(
@@ -521,7 +670,7 @@ describe("vmLifecycle service", () => {
   test("performVmAction STOP on a STOPPED VM rejects with a status conflict", async () => {
     const store = new FakeStore()
     const agent = new RecordingAgentClient()
-    agent.nextBody = { status: "PROVISIONING" }
+    agent.nextBody = agentOperation("create")
     const created = await createVm(store, admin, baseCreate, actionOptions(agent))
     store.vms.get(created.vm.id)!.status = "STOPPED"
     await assertRejects(
@@ -538,10 +687,10 @@ describe("vmLifecycle service", () => {
   test("performVmAction DELETE soft-deletes and then START returns VM_NOT_FOUND", async () => {
     const store = new FakeStore()
     const agent = new RecordingAgentClient()
-    agent.nextBody = { status: "PROVISIONING" }
+    agent.nextBody = agentOperation("create")
     const created = await createVm(store, admin, baseCreate, actionOptions(agent))
     const vmId = created.vm.id
-    agent.nextBody = { status: "DELETED", summary: "agent gc" }
+    agent.nextBody = agentOperation("delete")
     const deleted = await performVmAction(
       store,
       admin,
@@ -574,7 +723,7 @@ describe("vmLifecycle service", () => {
   test("performVmAction on a deleted VM rejects START without calling the agent", async () => {
     const store = new FakeStore()
     const agent = new RecordingAgentClient()
-    agent.nextBody = { status: "PROVISIONING" }
+    agent.nextBody = agentOperation("create")
     const created = await createVm(store, admin, baseCreate, actionOptions(agent))
     store.vms.get(created.vm.id)!.status = "DELETED"
     await assertRejects(
@@ -591,7 +740,7 @@ describe("vmLifecycle service", () => {
   test("performVmAction rejects a new action while a RUNNING operation is inflight and never calls the agent", async () => {
     const store = new FakeStore()
     const agent = new RecordingAgentClient()
-    agent.nextBody = { status: "PROVISIONING" }
+    agent.nextBody = agentOperation("create")
     const created = await createVm(store, admin, baseCreate, actionOptions(agent))
     const vmId = created.vm.id
     // Seed an inflight RUNNING operation so the inflight probe sees it.
@@ -617,7 +766,7 @@ describe("vmLifecycle service", () => {
   test("performVmAction rejects a new action while a QUEUED operation is inflight", async () => {
     const store = new FakeStore()
     const agent = new RecordingAgentClient()
-    agent.nextBody = { status: "PROVISIONING" }
+    agent.nextBody = agentOperation("create")
     const created = await createVm(store, admin, baseCreate, actionOptions(agent))
     const vmId = created.vm.id
     store.vms.get(vmId)!.status = "STOPPED"
@@ -645,7 +794,7 @@ describe("vmLifecycle service", () => {
   test("performVmAction DELETE records FAILED op but still soft-deletes when the agent is unavailable", async () => {
     const store = new FakeStore()
     const agent = new RecordingAgentClient()
-    agent.nextBody = { status: "PROVISIONING" }
+    agent.nextBody = agentOperation("create")
     const created = await createVm(store, admin, baseCreate, actionOptions(agent))
     const vmId = created.vm.id
     agent.nextThrow = new AgentTimeoutError("slow agent")
@@ -666,7 +815,7 @@ describe("vmLifecycle service", () => {
   test("performVmAction rejects a MEMBER principal without an agent call", async () => {
     const store = new FakeStore()
     const agent = new RecordingAgentClient()
-    agent.nextBody = { status: "PROVISIONING" }
+    agent.nextBody = agentOperation("create")
     const created = await createVm(store, admin, baseCreate, actionOptions(agent))
     await assertRejects(
       performVmAction(
@@ -683,7 +832,7 @@ describe("vmLifecycle service", () => {
   test("listVms / getVm / listVmOperations deny MEMBERS read access", async () => {
     const store = new FakeStore()
     const agent = new RecordingAgentClient()
-    agent.nextBody = { status: "PROVISIONING" }
+    agent.nextBody = agentOperation("create")
     await createVm(store, admin, baseCreate, actionOptions(agent))
 
     await assertRejects(listVms(store, member), /permission denied|authentication/i)
@@ -694,8 +843,7 @@ describe("vmLifecycle service", () => {
     const store = new FakeStore()
     const agent = new RecordingAgentClient()
     agent.nextBody = {
-      status: "PROVISIONING",
-      summary: "ack",
+      ...agentOperation("create"),
       vmConfig: "vm-config-that-must-not-leak",
       userData: "password: must-not-leak",
       agentPayload: "agent-payload-that-must-not-leak",

@@ -31,6 +31,7 @@ import type { VmLifecycleAgentClient } from "../../services/admin/vmLifecycle"
 import type {
   VmLifecycleStore,
   VmLifecycleEndpointForAgent,
+  VmLifecycleHostReadiness,
   ListVmsQuery,
 } from "../../services/admin/vmLifecycle"
 import type {
@@ -103,6 +104,31 @@ function uuid(i: number): string {
   return `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`
 }
 
+function readyHostState(overrides: Partial<VmLifecycleHostReadiness> = {}): VmLifecycleHostReadiness {
+  return {
+    endpointId: "endpoint-1",
+    status: "ONLINE",
+    incusAvailable: true,
+    capabilityVmLifecycle: true,
+    lastSeenAt: now,
+    ...overrides,
+  }
+}
+
+function agentOperation(
+  action: "create" | "start" | "stop" | "restart" | "delete",
+  instance = "vm-1",
+  status: "operation-accepted" | "sync-ok" = "operation-accepted"
+) {
+  return {
+    action,
+    instance,
+    status,
+    operationId: status === "operation-accepted" ? `agent-${action}-operation` : "",
+    operationKind: status === "operation-accepted" ? "async" : "sync",
+  }
+}
+
 interface FakeVmRecord extends PersistedVmInstance {
   // internal field for tests
 }
@@ -119,6 +145,7 @@ class FakeVmLifecycleStore implements VmLifecycleStore {
     tokenCiphertext: undefined,
     status: "ACTIVE",
   }
+  hostState: VmLifecycleHostReadiness | null = readyHostState()
 
   // Policy store overrides (test-controllable)
   project: PolicyProject = { id: "project-1", status: "ACTIVE", ownerTenantId: "tenant-1" }
@@ -361,6 +388,10 @@ class FakeVmLifecycleStore implements VmLifecycleStore {
     return this.agentEndpoint
   }
 
+  async getLatestHostStateForEndpoint(): Promise<VmLifecycleHostReadiness | null> {
+    return this.hostState
+  }
+
   async recordAudit(entry: AdminAuditEntry): Promise<void> {
     this.auditEntries.push(entry)
   }
@@ -386,7 +417,7 @@ class TestSessionStore implements AdminDataStore {
 class StubAgentClient implements VmLifecycleAgentClient {
   requests: AgentRequest[] = []
   nextStatus = 200
-  nextBody: unknown = { status: "RUNNING" }
+  nextBody: unknown = agentOperation("create")
   nextThrow?: Error
   async execute(request: AgentRequest): Promise<AgentResponse> {
     this.requests.push(request)
@@ -475,7 +506,7 @@ describe("admin VM lifecycle routes", () => {
   test("creates a VM, returns 201 with vm+operation, audits the mutation", async () => {
     const store = new FakeVmLifecycleStore()
     const agent = new StubAgentClient()
-    agent.nextBody = { status: "PROVISIONING", summary: "agent accepted create" }
+    agent.nextBody = agentOperation("create")
     const routes = buildRoutes(store, agent)
 
     const res = await routes.request("/vms", {
@@ -498,12 +529,19 @@ describe("admin VM lifecycle routes", () => {
     assert.equal(body.vm.network.addressFamily, "IPV4")
     assert.equal(body.operation.action, "CREATE")
     assert.equal(body.operation.status, "SUCCEEDED")
-    assert.equal(body.operation.summary, "agent accepted create")
+    assert.equal(body.operation.summary, "create operation-accepted (agent-create-operation)")
 
     // Agent was called after policy passes with the lifecycle protocol path.
     assert.equal(agent.requests.length, 1)
     assert.equal(agent.requests[0].method, "POST")
-    assert.equal(agent.requests[0].path, "/agent/v1/vm/lifecycle")
+    assert.equal(agent.requests[0].path, "/agent/v1/lifecycle/instances/create")
+    assert.deepEqual(agent.requests[0].body, {
+      name: "vm-1",
+      image: "images/ubuntu/22.04",
+      cpuCount: 1,
+      memoryBytes: 268_435_456,
+      rootDiskBytes: 5_368_709_120,
+    })
 
     // Audit: two entries — queued + succeeded.
     assert.equal(store.auditEntries.length, 2)
@@ -512,6 +550,28 @@ describe("admin VM lifecycle routes", () => {
     assert.equal(store.auditEntries[0].metadata?.action, "CREATE")
     assert.equal(store.auditEntries[0].metadata?.status, "QUEUED")
     assert.equal(store.auditEntries[1].metadata?.status, "SUCCEEDED")
+  })
+
+  test("denies stale host readiness with 409 and no operation or agent call", async () => {
+    const store = new FakeVmLifecycleStore()
+    store.hostState = readyHostState({ lastSeenAt: new Date("2026-06-23T23:44:59.999Z") })
+    const agent = new StubAgentClient()
+    const routes = buildRoutes(store, agent)
+
+    const res = await routes.request("/vms", {
+      method: "POST",
+      body: JSON.stringify(baseCreateBody),
+      headers: jsonHeaders(sessionCookie(globalAdmin)),
+    })
+
+    assert.equal(res.status, 409)
+    assert.deepEqual(await readJson(res), {
+      error: { code: "VM_HOST_NOT_READY", message: "Host state is stale before VM lifecycle mutation.", details: {} },
+    })
+    assert.equal(agent.requests.length, 0)
+    assert.equal(store.vms.size, 0)
+    assert.equal(store.operations.size, 0)
+    assert.equal(store.auditEntries.length, 0)
   })
 
   test("denies quota-exceeded create with safe 400", async () => {
@@ -599,7 +659,7 @@ describe("admin VM lifecycle routes", () => {
   test("denies duplicate VM name with 409", async () => {
     const store = new FakeVmLifecycleStore()
     const agent = new StubAgentClient()
-    agent.nextBody = { status: "PROVISIONING" }
+    agent.nextBody = agentOperation("create")
     const routes = buildRoutes(store, agent)
     const first = await routes.request("/vms", {
       method: "POST",
@@ -639,7 +699,7 @@ describe("admin VM lifecycle routes", () => {
     assert.equal(store.auditEntries.length, 2)
     assert.equal(store.auditEntries[1].metadata?.status, "FAILED")
     // No agent payload surfaced in audit metadata.
-    assert.equal(JSON.stringify(store.auditEntries).includes("/agent/v1/vm/lifecycle"), false)
+    assert.equal(JSON.stringify(store.auditEntries).includes("/agent/v1/lifecycle/instances/create"), false)
   })
 
   test("records FAILED operation and 502 for malformed agent response", async () => {
@@ -662,7 +722,7 @@ describe("admin VM lifecycle routes", () => {
   test("starts a stopped VM, audits vm.start", async () => {
     const store = new FakeVmLifecycleStore()
     const agent = new StubAgentClient()
-    agent.nextBody = { status: "RUNNING", summary: "started" }
+    agent.nextBody = agentOperation("create")
     const routes = buildRoutes(store, agent)
     const created = await routes.request("/vms", {
       method: "POST",
@@ -672,14 +732,14 @@ describe("admin VM lifecycle routes", () => {
     const vmId = (await readJson(created)).vm.id
 
     // stop first to allow start
-    agent.nextBody = { status: "STOPPED" }
+    agent.nextBody = agentOperation("stop")
     const stopRes = await routes.request(`/vms/${vmId}/stop`, {
       method: "POST",
       headers: { cookie: sessionCookie(globalAdmin) },
     })
     assert.equal(stopRes.status, 200)
 
-    agent.nextBody = { status: "RUNNING" }
+    agent.nextBody = agentOperation("start")
     const startRes = await routes.request(`/vms/${vmId}/start`, {
       method: "POST",
       headers: { cookie: sessionCookie(globalAdmin) },
@@ -698,7 +758,7 @@ describe("admin VM lifecycle routes", () => {
   test("stopping an already-stopped VM returns 409 VM_CONFLICT", async () => {
     const store = new FakeVmLifecycleStore()
     const agent = new StubAgentClient()
-    agent.nextBody = { status: "PROVISIONING" }
+    agent.nextBody = agentOperation("create")
     const routes = buildRoutes(store, agent)
     const created = await routes.request("/vms", {
       method: "POST",
@@ -720,7 +780,7 @@ describe("admin VM lifecycle routes", () => {
   test("restarting a stopped VM returns 409 VM_CONFLICT", async () => {
     const store = new FakeVmLifecycleStore()
     const agent = new StubAgentClient()
-    agent.nextBody = { status: "PROVISIONING" }
+    agent.nextBody = agentOperation("create")
     const routes = buildRoutes(store, agent)
     const created = await routes.request("/vms", {
       method: "POST",
@@ -741,7 +801,7 @@ describe("admin VM lifecycle routes", () => {
   test("delete soft-deletes VM, audits vm.delete, then re-start returns 404", async () => {
     const store = new FakeVmLifecycleStore()
     const agent = new StubAgentClient()
-    agent.nextBody = { status: "PROVISIONING" }
+    agent.nextBody = agentOperation("create")
     const routes = buildRoutes(store, agent)
     const created = await routes.request("/vms", {
       method: "POST",
@@ -750,7 +810,7 @@ describe("admin VM lifecycle routes", () => {
     })
     const vmId = (await readJson(created)).vm.id
 
-    agent.nextBody = { status: "DELETED", summary: "gc complete" }
+    agent.nextBody = agentOperation("delete")
     const delRes = await routes.request(`/vms/${vmId}`, {
       method: "DELETE",
       headers: { cookie: sessionCookie(globalAdmin) },
@@ -777,7 +837,7 @@ describe("admin VM lifecycle routes", () => {
   test("deleting a deleted VM returns 404", async () => {
     const store = new FakeVmLifecycleStore()
     const agent = new StubAgentClient()
-    agent.nextBody = { status: "PROVISIONING" }
+    agent.nextBody = agentOperation("create")
     const routes = buildRoutes(store, agent)
     const created = await routes.request("/vms", {
       method: "POST",
@@ -785,7 +845,7 @@ describe("admin VM lifecycle routes", () => {
       headers: jsonHeaders(sessionCookie(globalAdmin)),
     })
     const vmId = (await readJson(created)).vm.id
-    agent.nextBody = { status: "DELETED" }
+    agent.nextBody = agentOperation("delete")
     await routes.request(`/vms/${vmId}`, {
       method: "DELETE",
       headers: { cookie: sessionCookie(globalAdmin) },
@@ -800,7 +860,7 @@ describe("admin VM lifecycle routes", () => {
   test("lists vms and fetches a single vm", async () => {
     const store = new FakeVmLifecycleStore()
     const agent = new StubAgentClient()
-    agent.nextBody = { status: "PROVISIONING" }
+    agent.nextBody = agentOperation("create")
     const routes = buildRoutes(store, agent)
     const created = await routes.request("/vms", {
       method: "POST",
@@ -835,7 +895,7 @@ describe("admin VM lifecycle routes", () => {
   test("lists lifecycle operations", async () => {
     const store = new FakeVmLifecycleStore()
     const agent = new StubAgentClient()
-    agent.nextBody = { status: "PROVISIONING" }
+    agent.nextBody = agentOperation("create")
     const routes = buildRoutes(store, agent)
     const created = await routes.request("/vms", {
       method: "POST",
@@ -858,7 +918,7 @@ describe("admin VM lifecycle routes", () => {
   test("rejects unsupported action param with 400", async () => {
     const store = new FakeVmLifecycleStore()
     const agent = new StubAgentClient()
-    agent.nextBody = { status: "PROVISIONING" }
+    agent.nextBody = agentOperation("create")
     const routes = buildRoutes(store, agent)
     const created = await routes.request("/vms", {
       method: "POST",
@@ -878,7 +938,7 @@ describe("admin VM lifecycle routes", () => {
   test("rejects a new action while another lifecycle operation is running (409 VM_CONFLICT)", async () => {
     const store = new FakeVmLifecycleStore()
     const agent = new StubAgentClient()
-    agent.nextBody = { status: "PROVISIONING" }
+    agent.nextBody = agentOperation("create")
     const routes = buildRoutes(store, agent)
     const created = await routes.request("/vms", {
       method: "POST",
@@ -909,7 +969,7 @@ describe("admin VM lifecycle routes", () => {
   test("rejects a new action while another lifecycle operation is queued (409 VM_CONFLICT)", async () => {
     const store = new FakeVmLifecycleStore()
     const agent = new StubAgentClient()
-    agent.nextBody = { status: "PROVISIONING" }
+    agent.nextBody = agentOperation("create")
     const routes = buildRoutes(store, agent)
     const created = await routes.request("/vms", {
       method: "POST",
@@ -952,8 +1012,7 @@ describe("admin VM lifecycle routes", () => {
     const store = new FakeVmLifecycleStore()
     const agent = new StubAgentClient()
     agent.nextBody = {
-      status: "PROVISIONING",
-      summary: "ack",
+      ...agentOperation("create"),
       // hostile fields that must not echo back into the response or audit.
       token: "sekret",
       tokenCiphertext: "secret-ciphertext",

@@ -78,7 +78,6 @@ export interface VmLifecycleRoutesOptions {
   vmLifecycleStore?: VmLifecycleStore
   createAgentClient?: (options: AgentClientOptions) => VmLifecycleAgentClient
   now?: () => Date
-  stubAgent?: boolean
 }
 
 export function createVmLifecycleRoutes(options: VmLifecycleRoutesOptions = {}) {
@@ -92,7 +91,6 @@ export function createVmLifecycleRoutes(options: VmLifecycleRoutesOptions = {}) 
     env,
     createAgentClient: options.createAgentClient ?? ((clientOptions) => new AgentClient(clientOptions)),
     now: options.now,
-    stubAgent: options.stubAgent,
   }
 
   routes.post("/vms", async (c) => {
@@ -278,6 +276,12 @@ function mapVmRouteError(c: Context, error: unknown): Response {
     return c.json(
       { error: { code: "VM_AGENT_MALFORMED", message: "Agent lifecycle response is malformed.", details: {} } },
       502
+    )
+  }
+  if (code === "VM_HOST_NOT_READY") {
+    return c.json(
+      { error: { code: "VM_HOST_NOT_READY", message: (error as Error).message, details: {} } },
+      409
     )
   }
   if (code === "VM_INVALID_REQUEST") {
