@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { Link, useOutletContext } from "react-router-dom"
 import { Plus } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
@@ -38,7 +38,8 @@ export function AdminVms() {
   const { session } = useOutletContext<AppShellContext>()
   const canRead = canReadVms(session.access)
   const canCreate = canCreateVm(session.access)
-  const vmsApi = useApi(() => fetchAdminVms(), { enabled: canRead })
+  const useApiOptions = useMemo(() => ({ enabled: canRead }), [canRead])
+  const vmsApi = useApi(fetchAdminVms, useApiOptions)
   const [displayVms, setDisplayVms] = useState<BrowserVmInstance[]>([])
 
   useEffect(() => {

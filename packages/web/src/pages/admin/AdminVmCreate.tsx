@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useMemo, useState } from "react"
 import { Link, useNavigate, useOutletContext } from "react-router-dom"
 import { ArrowLeft } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -34,12 +34,13 @@ export function AdminVmCreate() {
   const { session } = useOutletContext<AppShellContext>()
   const canWrite = canCreateVm(session.access)
   const navigate = useNavigate()
+  const useApiOptions = useMemo(() => ({ enabled: canWrite }), [canWrite])
 
   // Fetch reference data for the form
-  const tenantsApi = useApi(() => fetchAdminTenants(), { enabled: canWrite })
-  const projectsApi = useApi(() => fetchAdminProjects(), { enabled: canWrite })
-  const endpointsApi = useApi(() => fetchAdminEndpoints(), { enabled: canWrite })
-  const poolsApi = useApi(() => fetchAdminProjectNetworkPools(), { enabled: canWrite })
+  const tenantsApi = useApi(fetchAdminTenants, useApiOptions)
+  const projectsApi = useApi(fetchAdminProjects, useApiOptions)
+  const endpointsApi = useApi(fetchAdminEndpoints, useApiOptions)
+  const poolsApi = useApi(fetchAdminProjectNetworkPools, useApiOptions)
 
   // Form state
   const [name, setName] = useState("")
@@ -113,14 +114,15 @@ export function AdminVmCreate() {
       navigate("/admin/vms")
     } catch (error) {
       if (error instanceof ApiRequestError) {
-        if (error.code === "VM_QUOTA_DENIED") {
+        const denial = classifyCreateVmDenial(error)
+        if (denial === "quota") {
           setQuotaDenied(true)
           setSubmitError(
             "Quota limit reached: the project or tenant does not have enough capacity for this VM."
           )
           return
         }
-        if (error.code === "VM_NETWORK_UNAVAILABLE") {
+        if (denial === "network") {
           setNetworkUnavailable(true)
           setSubmitError(
             "Network unavailable: the selected network pool is not ready for allocation."
@@ -392,6 +394,26 @@ export function AdminVmCreate() {
       </Card>
     </div>
   )
+}
+
+function classifyCreateVmDenial(error: ApiRequestError): "quota" | "network" | null {
+  if (error.code !== "VM_INVALID_REQUEST") {
+    return null
+  }
+
+  const detailsReason = typeof error.details.reason === "string" ? error.details.reason : null
+  const reasonText = `${detailsReason ?? ""}\n${error.message}`
+
+  if (
+    reasonText.includes("QUOTA_EXCEEDED") ||
+    reasonText.includes("TENANT_ALLOCATION_EXCEEDED")
+  ) {
+    return "quota"
+  }
+  if (reasonText.includes("NETWORK_POOL_UNAVAILABLE")) {
+    return "network"
+  }
+  return null
 }
 
 function formatBytes(bytes: number): string {

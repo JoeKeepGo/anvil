@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { Link, useOutletContext, useParams } from "react-router-dom"
 import { ArrowLeft, Play, Square, RotateCcw, Trash2 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
@@ -85,11 +85,15 @@ export function AdminVmDetail() {
   const canStop = canStopVm(session.access)
   const canRestart = canRestartVm(session.access)
   const canDelete = canDeleteVm(session.access)
+  const canFetchVm = canRead && Boolean(vmId)
 
-  const vmApi = useApi(() => fetchAdminVm(vmId!), { enabled: canRead && Boolean(vmId) })
-  const opsApi = useApi(() => fetchAdminVmOperations(vmId), {
-    enabled: canRead && Boolean(vmId),
-  })
+  const fetchVm = useCallback(() => fetchAdminVm(vmId!), [vmId])
+  const fetchVmOperations = useCallback(() => fetchAdminVmOperations(vmId), [vmId])
+  const useApiOptions = useMemo(() => ({ enabled: canFetchVm }), [canFetchVm])
+  const vmApi = useApi(fetchVm, useApiOptions)
+  const opsApi = useApi(fetchVmOperations, useApiOptions)
+  const refetchVm = vmApi.refetch
+  const refetchOperations = opsApi.refetch
 
   const [vm, setVm] = useState<BrowserVmInstance | null>(null)
   const [operations, setOperations] = useState<BrowserVmLifecycleOperation[]>([])
@@ -109,9 +113,9 @@ export function AdminVmDetail() {
   const onRefresh = useCallback(() => {
     setActionError(null)
     setActionNotice(null)
-    vmApi.refetch()
-    opsApi.refetch()
-  }, [vmApi, opsApi])
+    refetchVm()
+    refetchOperations()
+  }, [refetchVm, refetchOperations])
 
   async function handleAction(action: Exclude<VmLifecycleAction, "CREATE">) {
     if (!vm) return

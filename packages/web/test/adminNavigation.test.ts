@@ -212,12 +212,40 @@ describe("M13 admin VM lifecycle navigation", () => {
 
   test("admin VMs list page does not fetch before vm:read capability is available", () => {
     const readCheckIndex = adminVmsSource.indexOf("const canRead")
-    const vmFetchIndex = adminVmsSource.indexOf("useApi(() => fetchAdminVms()")
+    const vmFetchIndex = adminVmsSource.indexOf("useApi(fetchAdminVms")
 
     assert.notEqual(readCheckIndex, -1)
     assert.notEqual(vmFetchIndex, -1)
     assert.equal(readCheckIndex < vmFetchIndex, true)
-    assert.match(adminVmsSource, /useApi\(\(\) => fetchAdminVms\(\),\s*\{\s*enabled:\s*canRead\s*\}\)/)
+    assert.match(adminVmsSource, /useMemo\(\(\) => \(\{\s*enabled:\s*canRead\s*\}\), \[canRead\]\)/)
+    assert.match(adminVmsSource, /useApi\(fetchAdminVms,\s*useApiOptions\)/)
+  })
+
+  test("admin VM pages pass stable fetchers to useApi", () => {
+    assert.equal(adminVmsSource.includes("useApi(() => fetchAdminVms"), false)
+    assert.equal(adminVmDetailSource.includes("useApi(() => fetchAdminVm"), false)
+    assert.equal(adminVmDetailSource.includes("useApi(() => fetchAdminVmOperations"), false)
+    assert.equal(adminVmCreateSource.includes("useApi(() => fetchAdminTenants"), false)
+    assert.equal(adminVmCreateSource.includes("useApi(() => fetchAdminProjects"), false)
+    assert.equal(adminVmCreateSource.includes("useApi(() => fetchAdminEndpoints"), false)
+    assert.equal(
+      adminVmCreateSource.includes("useApi(() => fetchAdminProjectNetworkPools"),
+      false
+    )
+    assert.match(adminVmDetailSource, /useCallback\(\(\) => fetchAdminVm\(vmId!\), \[vmId\]\)/)
+    assert.match(
+      adminVmDetailSource,
+      /useCallback\(\(\) => fetchAdminVmOperations\(vmId\), \[vmId\]\)/
+    )
+  })
+
+  test("admin VM create page aligns quota and network denials with Phase 4 VM_INVALID_REQUEST", () => {
+    assert.match(adminVmCreateSource, /error\.code !== "VM_INVALID_REQUEST"/)
+    assert.match(adminVmCreateSource, /QUOTA_EXCEEDED/)
+    assert.match(adminVmCreateSource, /TENANT_ALLOCATION_EXCEEDED/)
+    assert.match(adminVmCreateSource, /NETWORK_POOL_UNAVAILABLE/)
+    assert.equal(adminVmCreateSource.includes("VM_QUOTA_DENIED"), false)
+    assert.equal(adminVmCreateSource.includes("VM_NETWORK_UNAVAILABLE"), false)
   })
 
   test("admin VM detail page conditionally gates lifecycle controls with granular permissions", () => {
