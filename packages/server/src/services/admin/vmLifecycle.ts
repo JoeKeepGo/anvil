@@ -501,39 +501,24 @@ export async function performVmAction(
     let summary = `${input.action.toLowerCase()} acknowledged by agent lifecycle protocol`
 
     if (input.action === "DELETE") {
-      // Delete is a soft-delete on the backend record; the agent call is a
-      // best-effort cleanup that cannot block the backend transition.
-      try {
-        const agentResponse = await callAgentLifecycle(
-          store,
-          existing.endpointId,
-          {
-            action: input.action,
-            vmInstanceId: input.vmInstanceId,
-            instanceName: existing.name,
-            imageReference: existing.imageReference,
-            limits: {
-              cpuCount: existing.cpuCount,
-              memoryBytes: numberFromBigInt(existing.memoryBytes),
-              rootDiskBytes: numberFromBigInt(existing.rootDiskBytes),
-            },
-            network: { poolId: existing.networkPoolId, addressFamily: existing.addressFamily },
+      const agentResponse = await callAgentLifecycle(
+        store,
+        existing.endpointId,
+        {
+          action: input.action,
+          vmInstanceId: input.vmInstanceId,
+          instanceName: existing.name,
+          imageReference: existing.imageReference,
+          limits: {
+            cpuCount: existing.cpuCount,
+            memoryBytes: numberFromBigInt(existing.memoryBytes),
+            rootDiskBytes: numberFromBigInt(existing.rootDiskBytes),
           },
-          options
-        )
-        summary = agentResponse.summary
-      } catch (error) {
-        // Deletion records FAILED operation but still soft-deletes the VM so
-        // the system isn't left with an undead record the agent can't reach.
-        const errorSummary = safeErrorSummary(error)
-        const failedOperation = await store.updateOperation(operation.id, {
-          status: "FAILED",
-          errorSummary,
-        })
-        const deletedInstance = await store.updateVmInstanceStatus(input.vmInstanceId, "DELETED")
-        await recordLifecycleAudit(store, actor, actionToAuditName(input.action), deletedInstance, failedOperation)
-        throw error
-      }
+          network: { poolId: existing.networkPoolId, addressFamily: existing.addressFamily },
+        },
+        options
+      )
+      summary = agentResponse.summary
       const deletedInstance = await store.updateVmInstanceStatus(input.vmInstanceId, "DELETED")
       const completedOperation = await store.updateOperation(operation.id, {
         status: "SUCCEEDED",
@@ -580,10 +565,7 @@ export async function performVmAction(
     }
   } catch (error) {
     const errorSummary = safeErrorSummary(error)
-    const failedInstance =
-      input.action === "DELETE"
-        ? await store.updateVmInstanceStatus(input.vmInstanceId, "DELETED")
-        : await store.updateVmInstanceStatus(input.vmInstanceId, "FAILED")
+    const failedInstance = await store.updateVmInstanceStatus(input.vmInstanceId, "FAILED")
     const failedOperation = await store.updateOperation(operation.id, {
       status: "FAILED",
       errorSummary,

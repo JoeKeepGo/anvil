@@ -198,6 +198,15 @@ class FakeVmLifecycleStore implements VmLifecycleStore {
     return this.projectTenantQuota
   }
   async getVmUsage(): Promise<PolicyVmUsage> {
+    const live = [...this.vms.values()].filter((vm) => vm.status !== "DELETED")
+    if (live.length > 0) {
+      return {
+        instanceCount: live.length,
+        totalVcpu: live.reduce((sum, vm) => sum + vm.cpuCount, 0),
+        totalMemoryBytes: live.reduce((sum, vm) => sum + Number(vm.memoryBytes), 0),
+        totalDiskBytes: live.reduce((sum, vm) => sum + Number(vm.rootDiskBytes), 0),
+      }
+    }
     return this.vmUsage
   }
   async getVmInstance(vmInstanceId: string): Promise<PolicyVmInstance | null> {
@@ -832,6 +841,74 @@ describe("admin VM lifecycle routes", () => {
     })
     assert.equal(startRes.status, 404)
     assert.equal((await readJson(startRes)).error.code, "VM_NOT_FOUND")
+  })
+
+  test("failed delete returns an error and keeps the VM visible with quota and name conflict intact", async () => {
+    const store = new FakeVmLifecycleStore()
+    const agent = new StubAgentClient()
+    agent.nextBody = agentOperation("create")
+    const routes = buildRoutes(store, agent)
+    const created = await routes.request("/vms", {
+      method: "POST",
+      body: JSON.stringify(baseCreateBody),
+      headers: jsonHeaders(sessionCookie(globalAdmin)),
+    })
+    const vmId = (await readJson(created)).vm.id
+    store.vms.get(vmId)!.status = "STOPPED"
+
+    agent.nextThrow = new AgentConnectionError("agent socket down")
+    const delRes = await routes.request(`/vms/${vmId}`, {
+      method: "DELETE",
+      headers: { cookie: sessionCookie(globalAdmin) },
+    })
+    assert.equal(delRes.status, 503)
+    assert.equal((await readJson(delRes)).error.code, "VM_AGENT_UNAVAILABLE")
+    assert.equal(store.vms.get(vmId)!.status, "FAILED")
+    assert.notEqual(store.vms.get(vmId)!.status, "DELETED")
+
+    const failedOp = [...store.operations.values()].find(
+      (o) => o.vmInstanceId === vmId && o.action === "DELETE"
+    )
+    assert.ok(failedOp)
+    assert.equal(failedOp!.status, "FAILED")
+    assert.ok(failedOp!.errorSummary)
+
+    const failedAudit = store.auditEntries.find(
+      (entry) => entry.action === "vm.delete" && entry.metadata?.status === "FAILED"
+    )
+    assert.ok(failedAudit)
+    assert.equal(JSON.stringify(store.auditEntries).includes("agent socket down"), false)
+
+    const listRes = await routes.request("/vms", {
+      headers: { cookie: sessionCookie(globalAdmin) },
+    })
+    assert.equal(listRes.status, 200)
+    const listBody = await readJson(listRes)
+    assert.equal(
+      listBody.vms.some((vm: { id: string; status: string }) => vm.id === vmId && vm.status === "FAILED"),
+      true
+    )
+
+    agent.nextBody = agentOperation("create")
+    store.projectQuota = { maxVcpu: null, maxMemoryBytes: null, maxDiskBytes: null, maxInstances: 1 }
+    const agentRequestCountAfterFailedDelete = agent.requests.length
+    const quotaDenied = await routes.request("/vms", {
+      method: "POST",
+      body: JSON.stringify({ ...baseCreateBody, name: "vm-after-failed-delete" }),
+      headers: jsonHeaders(sessionCookie(globalAdmin)),
+    })
+    assert.equal(quotaDenied.status, 400)
+    assert.equal((await readJson(quotaDenied)).error.code, "VM_INVALID_REQUEST")
+    assert.equal(agent.requests.length, agentRequestCountAfterFailedDelete)
+
+    store.projectQuota = null
+    const duplicate = await routes.request("/vms", {
+      method: "POST",
+      body: JSON.stringify(baseCreateBody),
+      headers: jsonHeaders(sessionCookie(globalAdmin)),
+    })
+    assert.equal(duplicate.status, 409)
+    assert.equal((await readJson(duplicate)).error.code, "VM_DUPLICATE_NAME")
   })
 
   test("deleting a deleted VM returns 404", async () => {
