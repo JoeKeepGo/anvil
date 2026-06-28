@@ -231,6 +231,24 @@ export interface VmLifecycleAgentRequestPayload {
   imageReference: string
   limits: { cpuCount: number; memoryBytes: number; rootDiskBytes: number }
   network: { poolId: string | null; addressFamily: VmAddressFamily }
+  secureBootEnabled: boolean
+}
+
+/**
+ * Resolve whether Secure Boot should be enabled for a given image reference.
+ *
+ * M13 policy: all known smoke/Alpine images require Secure Boot disabled
+ * (image property requirements.secureboot=false). Unknown images default to
+ * false for M13 — the safe choice when image capability is not yet catalogued.
+ *
+ * M14+: derive from image metadata (Incus image properties
+ * requirements.secureboot) via agent GET /1.0/images read path, or from an
+ * image capability catalogue, rather than extending the list here.
+ */
+export function resolveVmSecureBootEnabled(_imageReference: string): boolean {
+  // M13: no supported image requires Secure Boot. Default false until an image
+  // catalogue with requirements.secureboot=true entries is introduced.
+  return false
 }
 
 export interface VmLifecycleAgentResponsePayload {
@@ -435,6 +453,7 @@ export async function createVm(
         rootDiskBytes: input.rootDiskBytes,
       },
       network: { poolId: input.networkPoolId, addressFamily: input.addressFamily },
+      secureBootEnabled: resolveVmSecureBootEnabled(input.imageReference),
     }
     const agentResponse = await callAgentLifecycle(store, input.endpointId, agentPayload, options)
     const updatedInstance = await store.updateVmInstanceStatus(vmId, "PROVISIONING")
@@ -527,6 +546,7 @@ export async function performVmAction(
             rootDiskBytes: numberFromBigInt(existing.rootDiskBytes),
           },
           network: { poolId: existing.networkPoolId, addressFamily: existing.addressFamily },
+          secureBootEnabled: false,
         },
         options
       )
@@ -557,6 +577,7 @@ export async function performVmAction(
           rootDiskBytes: numberFromBigInt(existing.rootDiskBytes),
         },
         network: { poolId: existing.networkPoolId, addressFamily: existing.addressFamily },
+        secureBootEnabled: false,
       },
       options
     )
@@ -860,6 +881,7 @@ function buildAgentLifecycleRequest(payload: VmLifecycleAgentRequestPayload): Ag
           cpuCount: payload.limits.cpuCount,
           memoryBytes: payload.limits.memoryBytes,
           rootDiskBytes: payload.limits.rootDiskBytes,
+          secureBootEnabled: payload.secureBootEnabled,
         },
       }
     case "START":
