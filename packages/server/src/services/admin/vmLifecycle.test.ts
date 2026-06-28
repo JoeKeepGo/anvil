@@ -13,6 +13,7 @@ import {
   listVmOperations,
   listVms,
   performVmAction,
+  resolveVmSecureBootEnabled,
   type VmLifecycleActionOptions,
   type VmLifecycleAgentClient,
   type VmLifecycleEndpointForAgent,
@@ -406,6 +407,7 @@ describe("vmLifecycle service", () => {
       cpuCount: 1,
       memoryBytes: 268_435_456,
       rootDiskBytes: 5_368_709_120,
+      secureBootEnabled: false,
     })
     // Two audit entries: QUEUED then SUCCEEDED.
     assert.equal(store.auditEntries.length, 2)
@@ -960,6 +962,23 @@ describe("vmLifecycle service", () => {
     assert.equal(serialized.includes("must-not-leak"), false)
     assert.equal(store.auditEntries[1].metadata?.action, "CREATE")
     assert.equal(store.auditEntries[1].metadata?.status, "SUCCEEDED")
+  })
+})
+
+describe("resolveVmSecureBootEnabled", () => {
+  test("returns false for known Alpine/smoke image references", () => {
+    assert.equal(resolveVmSecureBootEnabled("anvil-m13-smoke-image"), false)
+    assert.equal(resolveVmSecureBootEnabled("alpine/3.22"), false)
+    assert.equal(resolveVmSecureBootEnabled("images:alpine/3.22"), false)
+  })
+
+  test("returns false for unknown image references (M13 default)", () => {
+    // M13 default is false: unknown images are assumed not to support Secure
+    // Boot. When an image catalogue with requirements.secureboot=true entries
+    // is introduced (M14+), this function will derive the value from metadata.
+    assert.equal(resolveVmSecureBootEnabled("images/ubuntu/22.04"), false)
+    assert.equal(resolveVmSecureBootEnabled("some-custom-image"), false)
+    assert.equal(resolveVmSecureBootEnabled(""), false)
   })
 })
 
