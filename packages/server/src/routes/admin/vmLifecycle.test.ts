@@ -551,6 +551,7 @@ describe("admin VM lifecycle routes", () => {
       cpuCount: 1,
       memoryBytes: 268_435_456,
       rootDiskBytes: 5_368_709_120,
+      secureBootEnabled: false,
     })
 
     // Audit: two entries — queued + succeeded.
