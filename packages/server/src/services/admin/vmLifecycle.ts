@@ -330,6 +330,18 @@ export class VmLifecycleMalformedAgentResponseError extends VmLifecycleError {
   }
 }
 
+export class VmLifecycleAgentLifecycleFailedError extends VmLifecycleError {
+  readonly code = "VM_AGENT_LIFECYCLE_FAILED" as const
+  readonly reason: string
+
+  constructor(reason: string) {
+    const safeReason = sanitizeAgentLifecycleFailureReason(reason)
+    super(`Agent lifecycle operation failed: ${safeReason}`)
+    this.name = "VmLifecycleAgentLifecycleFailedError"
+    this.reason = safeReason
+  }
+}
+
 export class VmLifecycleHostNotReadyError extends VmLifecycleError {
   readonly code = "VM_HOST_NOT_READY" as const
   constructor(message: string) {
@@ -799,12 +811,13 @@ async function callAgentLifecycle(
       timeoutMs
     )
     if (response.status < 200 || response.status >= 300) {
-      throw new VmLifecycleMalformedAgentResponseError()
+      throw new VmLifecycleAgentLifecycleFailedError(agentLifecycleFailureReason(response))
     }
     return normalizeAgentLifecycleResponse(response.body, payload)
   } catch (error) {
     if (
       error instanceof VmLifecycleMalformedAgentResponseError ||
+      error instanceof VmLifecycleAgentLifecycleFailedError ||
       error instanceof VmLifecycleAgentUnavailableError ||
       error instanceof EndpointTokenKeyError
     ) {
@@ -821,6 +834,18 @@ async function callAgentLifecycle(
   } finally {
     client.close?.()
   }
+}
+
+function agentLifecycleFailureReason(response: AgentResponse): string {
+  if (typeof response.error === "string" && response.error.trim() !== "") {
+    return response.error
+  }
+  return `agent lifecycle request failed with status ${response.status}`
+}
+
+function sanitizeAgentLifecycleFailureReason(reason: string): string {
+  const normalized = reason.replace(/\s+/g, " ").trim()
+  return normalized.length > 0 ? normalized : "agent lifecycle operation failed"
 }
 
 function buildAgentLifecycleRequest(payload: VmLifecycleAgentRequestPayload): AgentRequest {

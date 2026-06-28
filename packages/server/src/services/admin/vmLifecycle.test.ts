@@ -359,7 +359,9 @@ class FakeStore implements VmLifecycleStore {
 
 class RecordingAgentClient implements VmLifecycleAgentClient {
   requests: AgentRequest[] = []
+  nextStatus = 200
   nextBody: unknown = agentOperation("create")
+  nextError?: string
   nextThrow?: Error
   async execute(request: AgentRequest): Promise<AgentResponse> {
     this.requests.push(request)
@@ -368,7 +370,7 @@ class RecordingAgentClient implements VmLifecycleAgentClient {
       this.nextThrow = undefined
       throw err
     }
-    return { id: "resp", status: 200, body: this.nextBody }
+    return { id: "resp", status: this.nextStatus, body: this.nextBody, error: this.nextError }
   }
   close?(): void {}
 }
@@ -433,6 +435,39 @@ describe("vmLifecycle service", () => {
       store.auditEntries.some((entry) => entry.action === "vm.create" && entry.metadata?.status === "SUCCEEDED"),
       false
     )
+  })
+
+  test("createVm records safe upstream lifecycle failures without marking them malformed", async () => {
+    const store = new FakeStore()
+    const agent = new RecordingAgentClient()
+    agent.nextStatus = 502
+    agent.nextBody = null
+    agent.nextError = "incus lifecycle create completed but instance is missing"
+
+    let caught: unknown
+    try {
+      await createVm(store, admin, baseCreate, actionOptions(agent))
+    } catch (error) {
+      caught = error
+    }
+
+    assert.equal((caught as { code?: string }).code, "VM_AGENT_LIFECYCLE_FAILED")
+    assert.match(caught instanceof Error ? caught.message : String(caught), /instance is missing/)
+    assert.doesNotMatch(caught instanceof Error ? caught.message : String(caught), /malformed/i)
+
+    const vm = [...store.vms.values()].find((record) => record.name === "vm-1")
+    assert.ok(vm)
+    assert.equal(vm!.status, "FAILED")
+    const failedOp = [...store.operations.values()].find((operation) => operation.action === "CREATE")
+    assert.ok(failedOp)
+    assert.equal(failedOp!.status, "FAILED")
+    assert.equal(
+      failedOp!.errorSummary,
+      "Agent lifecycle operation failed: incus lifecycle create completed but instance is missing"
+    )
+    assert.equal(store.auditEntries.length, 2)
+    assert.equal(store.auditEntries[1].metadata?.status, "FAILED")
+    assert.equal(JSON.stringify(store.auditEntries).includes("malformed"), false)
   })
 
   test("lifecycle actions use accepted Phase 3 agent paths and payloads", async () => {
