@@ -427,6 +427,7 @@ class StubAgentClient implements VmLifecycleAgentClient {
   requests: AgentRequest[] = []
   nextStatus = 200
   nextBody: unknown = agentOperation("create")
+  nextError?: string
   nextThrow?: Error
   async execute(request: AgentRequest): Promise<AgentResponse> {
     this.requests.push(request)
@@ -435,7 +436,7 @@ class StubAgentClient implements VmLifecycleAgentClient {
       this.nextThrow = undefined
       throw err
     }
-    return { id: "resp", status: this.nextStatus, body: this.nextBody }
+    return { id: "resp", status: this.nextStatus, body: this.nextBody, error: this.nextError }
   }
   close?(): void {}
 }
@@ -726,6 +727,40 @@ describe("admin VM lifecycle routes", () => {
     assert.equal((await readJson(res)).error.code, "VM_AGENT_MALFORMED")
     const failedOp = [...store.operations.values()].find((o) => o.action === "CREATE")
     assert.equal(failedOp!.status, "FAILED")
+  })
+
+  test("records FAILED operation and 502 for safe upstream lifecycle failure", async () => {
+    const store = new FakeVmLifecycleStore()
+    const agent = new StubAgentClient()
+    agent.nextStatus = 502
+    agent.nextBody = null
+    agent.nextError = "incus lifecycle create completed but instance is missing"
+    const routes = buildRoutes(store, agent)
+
+    const res = await routes.request("/vms", {
+      method: "POST",
+      body: JSON.stringify(baseCreateBody),
+      headers: jsonHeaders(sessionCookie(globalAdmin)),
+    })
+    assert.equal(res.status, 502)
+    const body = await readJson(res)
+    assert.equal(body.error.code, "VM_AGENT_LIFECYCLE_FAILED")
+    assert.equal(body.error.message, "Agent lifecycle operation failed.")
+    assert.equal(body.error.details.reason, "incus lifecycle create completed but instance is missing")
+
+    const vm = [...store.vms.values()].find((record) => record.name === "vm-1")
+    assert.ok(vm)
+    assert.equal(vm!.status, "FAILED")
+    const failedOp = [...store.operations.values()].find((o) => o.action === "CREATE")
+    assert.ok(failedOp)
+    assert.equal(failedOp!.status, "FAILED")
+    assert.equal(
+      failedOp!.errorSummary,
+      "Agent lifecycle operation failed: incus lifecycle create completed but instance is missing"
+    )
+    assert.equal(store.auditEntries.length, 2)
+    assert.equal(store.auditEntries[1].metadata?.status, "FAILED")
+    assert.equal(JSON.stringify(store.auditEntries).includes("VM_AGENT_MALFORMED"), false)
   })
 
   test("does not report create success for old operation-accepted agent responses", async () => {

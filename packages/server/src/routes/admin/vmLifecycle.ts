@@ -278,6 +278,18 @@ function mapVmRouteError(c: Context, error: unknown): Response {
       502
     )
   }
+  if (code === "VM_AGENT_LIFECYCLE_FAILED") {
+    return c.json(
+      {
+        error: {
+          code: "VM_AGENT_LIFECYCLE_FAILED",
+          message: "Agent lifecycle operation failed.",
+          details: { reason: (error as { reason?: string }).reason ?? "agent lifecycle operation failed" },
+        },
+      },
+      502
+    )
+  }
   if (code === "VM_HOST_NOT_READY") {
     return c.json(
       { error: { code: "VM_HOST_NOT_READY", message: (error as Error).message, details: {} } },
