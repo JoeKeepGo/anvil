@@ -59,11 +59,25 @@ export interface ImageSummary {
   expiresAt: string | null
   lastUsedAt: string | null
   uploadedAt: string | null
+  runtimePolicy: ImageRuntimePolicy
 }
 
 export interface ImageAlias {
   name: string
   description: string
+}
+
+export type ImageSecureBootRequirement = "REQUIRED" | "UNSUPPORTED" | "UNKNOWN"
+export type ImageSecureBootSource = "incus-image-property" | "unknown"
+export type ImageCreateBlockedReason = "IMAGE_POLICY_UNKNOWN" | "IMAGE_NOT_VM" | null
+
+export interface ImageRuntimePolicy {
+  secureBoot: {
+    requirement: ImageSecureBootRequirement
+    source: ImageSecureBootSource
+  }
+  createEligible: boolean
+  createBlockedReason: ImageCreateBlockedReason
 }
 
 export interface ImagesResponse {

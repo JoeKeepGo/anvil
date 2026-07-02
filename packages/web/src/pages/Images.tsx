@@ -12,7 +12,7 @@ import {
 } from "@/components/ui/table"
 import { useApi } from "@/hooks/useApi"
 import { fetchImages } from "@/lib/api"
-import type { ImageSummary } from "@/types"
+import type { ImageCreateBlockedReason, ImageSecureBootRequirement, ImageSummary } from "@/types"
 
 interface ImagesViewState {
   data: ImageSummary[] | null
@@ -66,6 +66,8 @@ function ImagesTable({ images }: { images: ImageSummary[] }) {
             <TableHead>Description</TableHead>
             <TableHead>Aliases</TableHead>
             <TableHead>Type</TableHead>
+            <TableHead>Secure Boot</TableHead>
+            <TableHead>Create</TableHead>
             <TableHead>Architecture</TableHead>
             <TableHead>Size</TableHead>
             <TableHead>Flags</TableHead>
@@ -98,6 +100,12 @@ function ImagesTable({ images }: { images: ImageSummary[] }) {
                 )}
               </TableCell>
               <TableCell>{image.type}</TableCell>
+              <TableCell>
+                <SecureBootBadge requirement={image.runtimePolicy.secureBoot.requirement} />
+              </TableCell>
+              <TableCell>
+                <CreateEligibility image={image} />
+              </TableCell>
               <TableCell className="text-muted-foreground">
                 {image.architecture ?? "Unknown"}
               </TableCell>
@@ -155,6 +163,8 @@ function ImagesSkeleton() {
             <TableHead>Description</TableHead>
             <TableHead>Aliases</TableHead>
             <TableHead>Type</TableHead>
+            <TableHead>Secure Boot</TableHead>
+            <TableHead>Create</TableHead>
             <TableHead>Architecture</TableHead>
             <TableHead>Size</TableHead>
             <TableHead>Flags</TableHead>
@@ -167,7 +177,7 @@ function ImagesSkeleton() {
         <TableBody>
           {Array.from({ length: 3 }).map((_, index) => (
             <TableRow key={index}>
-              {Array.from({ length: 11 }).map((__, cellIndex) => (
+              {Array.from({ length: 13 }).map((__, cellIndex) => (
                 <TableCell key={cellIndex}>
                   <Skeleton className="h-4 w-24" />
                 </TableCell>
@@ -176,6 +186,27 @@ function ImagesSkeleton() {
           ))}
         </TableBody>
       </Table>
+    </div>
+  )
+}
+
+function SecureBootBadge({ requirement }: { requirement: ImageSecureBootRequirement }) {
+  return (
+    <Badge variant={requirement === "UNKNOWN" ? "destructive" : "outline"}>
+      {formatSecureBootRequirement(requirement)}
+    </Badge>
+  )
+}
+
+function CreateEligibility({ image }: { image: ImageSummary }) {
+  const reason = formatCreateBlockedReason(image.runtimePolicy.createBlockedReason)
+
+  return (
+    <div className="flex max-w-[12rem] flex-col gap-1">
+      <Badge variant={image.runtimePolicy.createEligible ? "outline" : "destructive"}>
+        {image.runtimePolicy.createEligible ? "Eligible" : "Blocked"}
+      </Badge>
+      {reason ? <span className="text-xs text-muted-foreground">{reason}</span> : null}
     </div>
   )
 }
@@ -199,4 +230,26 @@ function formatBytes(bytes: number): string {
 
 function formatTimestamp(value: string | null): string {
   return value ?? "Unknown"
+}
+
+function formatSecureBootRequirement(requirement: ImageSecureBootRequirement): string {
+  switch (requirement) {
+    case "REQUIRED":
+      return "Required"
+    case "UNSUPPORTED":
+      return "Unsupported"
+    case "UNKNOWN":
+      return "Unknown"
+  }
+}
+
+function formatCreateBlockedReason(reason: ImageCreateBlockedReason): string | null {
+  switch (reason) {
+    case "IMAGE_POLICY_UNKNOWN":
+      return "Image policy unknown"
+    case "IMAGE_NOT_VM":
+      return "Not a VM image"
+    case null:
+      return null
+  }
 }
