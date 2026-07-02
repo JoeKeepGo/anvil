@@ -85,6 +85,11 @@ describe("getImages", () => {
           expiresAt: "1970-01-01T00:00:00Z",
           lastUsedAt: "2026-05-01T15:43:07.015642534Z",
           uploadedAt: "2026-05-01T15:43:06.962275814Z",
+          runtimePolicy: {
+            secureBoot: { requirement: "UNKNOWN", source: "unknown" },
+            createEligible: false,
+            createBlockedReason: "IMAGE_NOT_VM",
+          },
         },
       ],
     })
@@ -130,6 +135,11 @@ describe("getImages", () => {
           expiresAt: null,
           lastUsedAt: null,
           uploadedAt: null,
+          runtimePolicy: {
+            secureBoot: { requirement: "UNKNOWN", source: "unknown" },
+            createEligible: false,
+            createBlockedReason: "IMAGE_NOT_VM",
+          },
         },
       ],
     })
@@ -177,7 +187,57 @@ describe("getImages", () => {
           expiresAt: null,
           lastUsedAt: null,
           uploadedAt: null,
+          runtimePolicy: {
+            secureBoot: { requirement: "UNKNOWN", source: "unknown" },
+            createEligible: false,
+            createBlockedReason: "IMAGE_NOT_VM",
+          },
         },
+      ],
+    })
+  })
+
+  test("normalizes VM secure boot policy from the verified Incus image property", async () => {
+    const result = await getImages(
+      new RecordingAgent([
+        imageResponse([
+          vmImage("secureboot-required", { "requirements.secureboot": "true" }),
+          vmImage("secureboot-unsupported", { "requirements.secureboot": "false" }),
+          vmImage("secureboot-missing", {}),
+          vmImage("secureboot-malformed", { "requirements.secureboot": true }),
+          vmImage("secureboot-unexpected", { "requirements.secureboot": "sometimes" }),
+        ]),
+      ])
+    )
+
+    assert.equal(result.httpStatus, 200)
+    assert.deepEqual(result.body, {
+      images: [
+        imageSummary("secureboot-required", {
+          secureBoot: { requirement: "REQUIRED", source: "incus-image-property" },
+          createEligible: true,
+          createBlockedReason: null,
+        }),
+        imageSummary("secureboot-unsupported", {
+          secureBoot: { requirement: "UNSUPPORTED", source: "incus-image-property" },
+          createEligible: true,
+          createBlockedReason: null,
+        }),
+        imageSummary("secureboot-missing", {
+          secureBoot: { requirement: "UNKNOWN", source: "unknown" },
+          createEligible: false,
+          createBlockedReason: "IMAGE_POLICY_UNKNOWN",
+        }),
+        imageSummary("secureboot-malformed", {
+          secureBoot: { requirement: "UNKNOWN", source: "unknown" },
+          createEligible: false,
+          createBlockedReason: "IMAGE_POLICY_UNKNOWN",
+        }),
+        imageSummary("secureboot-unexpected", {
+          secureBoot: { requirement: "UNKNOWN", source: "unknown" },
+          createEligible: false,
+          createBlockedReason: "IMAGE_POLICY_UNKNOWN",
+        }),
       ],
     })
   })
@@ -324,5 +384,52 @@ function imageResponse(metadata: unknown[]): AgentResponse {
       status_code: 200,
       metadata,
     },
+  }
+}
+
+function vmImage(alias: string, properties: Record<string, unknown>) {
+  return {
+    fingerprint: `${alias}-fingerprint`,
+    aliases: [{ name: alias, description: "" }],
+    architecture: "x86_64",
+    auto_update: false,
+    cached: false,
+    created_at: "2026-06-25T00:00:00Z",
+    expires_at: "1970-01-01T00:00:00Z",
+    last_used_at: "2026-06-28T06:54:41.216264267Z",
+    properties: {
+      description: `${alias} image`,
+      ...properties,
+    },
+    public: false,
+    size: 70189968,
+    type: "virtual-machine",
+    uploaded_at: "2026-06-28T03:17:58.413550343Z",
+  }
+}
+
+function imageSummary(
+  alias: string,
+  runtimePolicy: {
+    secureBoot: { requirement: "REQUIRED" | "UNSUPPORTED" | "UNKNOWN"; source: "incus-image-property" | "unknown" }
+    createEligible: boolean
+    createBlockedReason: "IMAGE_POLICY_UNKNOWN" | "IMAGE_NOT_VM" | null
+  }
+) {
+  return {
+    fingerprint: `${alias}-fingerprint`,
+    aliases: [{ name: alias, description: "" }],
+    description: `${alias} image`,
+    architecture: "x86_64",
+    type: "virtual-machine",
+    sizeBytes: 70189968,
+    cached: false,
+    public: false,
+    autoUpdate: false,
+    createdAt: "2026-06-25T00:00:00Z",
+    expiresAt: "1970-01-01T00:00:00Z",
+    lastUsedAt: "2026-06-28T06:54:41.216264267Z",
+    uploadedAt: "2026-06-28T03:17:58.413550343Z",
+    runtimePolicy,
   }
 }

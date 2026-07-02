@@ -15,6 +15,19 @@ export interface ImageAlias {
   description: string
 }
 
+export type ImageSecureBootRequirement = "REQUIRED" | "UNSUPPORTED" | "UNKNOWN"
+export type ImageRuntimePolicySource = "incus-image-property" | "unknown"
+export type ImageCreateBlockedReason = "IMAGE_POLICY_UNKNOWN" | "IMAGE_NOT_VM" | null
+
+export interface ImageRuntimePolicy {
+  secureBoot: {
+    requirement: ImageSecureBootRequirement
+    source: ImageRuntimePolicySource
+  }
+  createEligible: boolean
+  createBlockedReason: ImageCreateBlockedReason
+}
+
 export interface ImageSummary {
   fingerprint: string
   aliases: ImageAlias[]
@@ -29,6 +42,7 @@ export interface ImageSummary {
   expiresAt: string | null
   lastUsedAt: string | null
   uploadedAt: string | null
+  runtimePolicy: ImageRuntimePolicy
 }
 
 type ImagesSuccessBody = {
@@ -65,7 +79,7 @@ export async function getImages(
       return responseError
     }
 
-    const images = readImages(response.body)
+    const images = readImageCatalog(response.body)
     if (!images) {
       return malformedUpstreamResponse()
     }
@@ -126,7 +140,7 @@ function mapNonSuccessResponse(response: AgentResponse): ImagesResult | undefine
   }
 }
 
-function readImages(body: unknown): ImageSummary[] | undefined {
+export function readImageCatalog(body: unknown): ImageSummary[] | undefined {
   const metadata = readMetadata(body)
 
   if (!Array.isArray(metadata)) {
@@ -156,8 +170,13 @@ function readImage(value: unknown): ImageSummary | undefined {
     return undefined
   }
 
+  const properties = readProperties(image.properties)
+  if (properties === undefined) {
+    return undefined
+  }
+
   const aliases = readAliases(image.aliases)
-  const description = readDescription(image.properties)
+  const description = readDescription(properties)
   const architecture = readOptionalString(image, "architecture")
   const sizeBytes = readOptionalNumber(image, "size", 0)
   const cached = readOptionalBoolean(image, "cached", false)
@@ -198,6 +217,7 @@ function readImage(value: unknown): ImageSummary | undefined {
     expiresAt,
     lastUsedAt,
     uploadedAt,
+    runtimePolicy: buildRuntimePolicy(image.type, properties),
   }
 }
 
@@ -235,21 +255,56 @@ function readAliases(value: unknown): ImageAlias[] | undefined {
   return aliases
 }
 
-function readDescription(value: unknown): string | undefined {
+function readProperties(value: unknown): Record<string, unknown> | undefined {
   if (value === undefined || value === null) {
-    return ""
+    return {}
   }
 
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return undefined
   }
 
-  const properties = value as Record<string, unknown>
+  return value as Record<string, unknown>
+}
+
+function readDescription(properties: Record<string, unknown>): string | undefined {
   if (!Object.hasOwn(properties, "description") || properties.description === null) {
     return ""
   }
 
   return typeof properties.description === "string" ? properties.description : undefined
+}
+
+function buildRuntimePolicy(type: string, properties: Record<string, unknown>): ImageRuntimePolicy {
+  if (type !== "virtual-machine") {
+    return {
+      secureBoot: { requirement: "UNKNOWN", source: "unknown" },
+      createEligible: false,
+      createBlockedReason: "IMAGE_NOT_VM",
+    }
+  }
+
+  const secureBootRequirement = properties["requirements.secureboot"]
+  if (secureBootRequirement === "true") {
+    return {
+      secureBoot: { requirement: "REQUIRED", source: "incus-image-property" },
+      createEligible: true,
+      createBlockedReason: null,
+    }
+  }
+  if (secureBootRequirement === "false") {
+    return {
+      secureBoot: { requirement: "UNSUPPORTED", source: "incus-image-property" },
+      createEligible: true,
+      createBlockedReason: null,
+    }
+  }
+
+  return {
+    secureBoot: { requirement: "UNKNOWN", source: "unknown" },
+    createEligible: false,
+    createBlockedReason: "IMAGE_POLICY_UNKNOWN",
+  }
 }
 
 function readOptionalString(source: Record<string, unknown>, key: string): string | null | undefined {

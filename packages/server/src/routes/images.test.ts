@@ -109,6 +109,67 @@ describe("image routes", () => {
     assert.equal(JSON.stringify(body).includes("secret-token"), false)
   })
 
+  test("GET /images returns browser-safe image runtime policy fields", async () => {
+    const route = createImageRoutes({
+      env: { ANVIL_AGENT_URL: "ws://127.0.0.1:19090/ws" },
+      createClient: () => ({
+        execute: async () =>
+          imageResponse([
+            {
+              fingerprint: "image-fingerprint",
+              aliases: [{ name: "anvil-m13-smoke-image", description: "" }],
+              architecture: "x86_64",
+              auto_update: false,
+              cached: false,
+              created_at: "2026-06-25T00:00:00Z",
+              expires_at: "1970-01-01T00:00:00Z",
+              last_used_at: "2026-06-28T06:54:41.216264267Z",
+              properties: {
+                description: "Alpine 3.22 amd64 (20260625_13:14)",
+                "requirements.secureboot": "false",
+                secret: "do-not-return",
+              },
+              public: false,
+              size: 70189968,
+              type: "virtual-machine",
+              uploaded_at: "2026-06-28T03:17:58.413550343Z",
+            },
+          ]),
+      }),
+    })
+
+    const response = await route.request("/images")
+    const body = await readJson(response)
+
+    assert.equal(response.status, 200)
+    assert.deepEqual(body, {
+      images: [
+        {
+          fingerprint: "image-fingerprint",
+          aliases: [{ name: "anvil-m13-smoke-image", description: "" }],
+          description: "Alpine 3.22 amd64 (20260625_13:14)",
+          architecture: "x86_64",
+          type: "virtual-machine",
+          sizeBytes: 70189968,
+          cached: false,
+          public: false,
+          autoUpdate: false,
+          createdAt: "2026-06-25T00:00:00Z",
+          expiresAt: "1970-01-01T00:00:00Z",
+          lastUsedAt: "2026-06-28T06:54:41.216264267Z",
+          uploadedAt: "2026-06-28T03:17:58.413550343Z",
+          runtimePolicy: {
+            secureBoot: { requirement: "UNSUPPORTED", source: "incus-image-property" },
+            createEligible: true,
+            createBlockedReason: null,
+          },
+        },
+      ],
+    })
+    assert.equal(JSON.stringify(body).includes("do-not-return"), false)
+    assert.equal(JSON.stringify(body).includes("properties"), false)
+  })
+
   test("GET /images maps missing config to documented error shape", async () => {
     const route = createImageRoutes({ env: {} })
     const response = await route.request("/images")

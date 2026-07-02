@@ -36,6 +36,11 @@ import {
   type AgentResponse,
 } from "../agent"
 import { AuthConfigError } from "../auth"
+import {
+  readImageCatalog,
+  type ImageCreateBlockedReason,
+  type ImageSummary,
+} from "../images"
 import { decryptEndpointToken, EndpointTokenKeyError } from "./endpoints"
 import type { AdminAuditEntry, AdminPrincipal } from "./session"
 import {
@@ -234,23 +239,6 @@ export interface VmLifecycleAgentRequestPayload {
   secureBootEnabled: boolean
 }
 
-/**
- * Resolve whether Secure Boot should be enabled for a given image reference.
- *
- * M13 policy: all known smoke/Alpine images require Secure Boot disabled
- * (image property requirements.secureboot=false). Unknown images default to
- * false for M13 — the safe choice when image capability is not yet catalogued.
- *
- * M14+: derive from image metadata (Incus image properties
- * requirements.secureboot) via agent GET /1.0/images read path, or from an
- * image capability catalogue, rather than extending the list here.
- */
-export function resolveVmSecureBootEnabled(_imageReference: string): boolean {
-  // M13: no supported image requires Secure Boot. Default false until an image
-  // catalogue with requirements.secureboot=true entries is introduced.
-  return false
-}
-
 export interface VmLifecycleAgentResponsePayload {
   action: Exclude<VmLifecycleAction, "CREATE"> | "CREATE"
   instanceName: string
@@ -340,6 +328,29 @@ export class VmLifecycleAgentUnavailableError extends VmLifecycleError {
   }
 }
 
+export type VmImageCreateBlockedReason =
+  | Exclude<ImageCreateBlockedReason, null>
+  | "IMAGE_NOT_FOUND"
+
+export class VmLifecycleImageNotEligibleError extends VmLifecycleError {
+  readonly code = "VM_IMAGE_NOT_ELIGIBLE" as const
+  readonly reason: VmImageCreateBlockedReason
+
+  constructor(reason: VmImageCreateBlockedReason) {
+    super("VM image is not eligible for create.")
+    this.name = "VmLifecycleImageNotEligibleError"
+    this.reason = reason
+  }
+}
+
+export class VmLifecycleImagePolicyUnavailableError extends VmLifecycleError {
+  readonly code = "VM_IMAGE_POLICY_UNAVAILABLE" as const
+  constructor(message = "VM image policy is unavailable.") {
+    super(message)
+    this.name = "VmLifecycleImagePolicyUnavailableError"
+  }
+}
+
 export class VmLifecycleMalformedAgentResponseError extends VmLifecycleError {
   readonly code = "VM_AGENT_MALFORMED" as const
   constructor(message = "Agent lifecycle response is malformed.") {
@@ -408,6 +419,13 @@ export async function createVm(
     throw new VmLifecycleDuplicateNameError()
   }
 
+  const imagePolicy = await resolveVmCreateImagePolicy(
+    store,
+    input.endpointId,
+    input.imageReference,
+    options
+  )
+
   const vmId = cryptoRandomUuid()
   const now = options.now?.() ?? new Date()
   void now
@@ -453,7 +471,7 @@ export async function createVm(
         rootDiskBytes: input.rootDiskBytes,
       },
       network: { poolId: input.networkPoolId, addressFamily: input.addressFamily },
-      secureBootEnabled: resolveVmSecureBootEnabled(input.imageReference),
+      secureBootEnabled: imagePolicy.secureBootEnabled,
     }
     const agentResponse = await callAgentLifecycle(store, input.endpointId, agentPayload, options)
     const updatedInstance = await store.updateVmInstanceStatus(vmId, "PROVISIONING")
@@ -792,6 +810,102 @@ async function recordLifecycleAudit(
     targetId: operation.id,
     metadata: metadata as unknown as Record<string, unknown>,
   })
+}
+
+async function resolveVmCreateImagePolicy(
+  store: VmLifecycleStore,
+  endpointId: string,
+  imageReference: string,
+  options: VmLifecycleActionOptions
+): Promise<{ secureBootEnabled: boolean }> {
+  const images = await readAgentImageCatalog(store, endpointId, options)
+  const image = images.find((candidate) => imageMatchesReference(candidate, imageReference))
+  if (!image) {
+    throw new VmLifecycleImageNotEligibleError("IMAGE_NOT_FOUND")
+  }
+
+  if (!image.runtimePolicy.createEligible) {
+    throw new VmLifecycleImageNotEligibleError(
+      image.runtimePolicy.createBlockedReason ?? "IMAGE_POLICY_UNKNOWN"
+    )
+  }
+
+  switch (image.runtimePolicy.secureBoot.requirement) {
+    case "REQUIRED":
+      return { secureBootEnabled: true }
+    case "UNSUPPORTED":
+      return { secureBootEnabled: false }
+    case "UNKNOWN":
+      throw new VmLifecycleImageNotEligibleError("IMAGE_POLICY_UNKNOWN")
+  }
+}
+
+function imageMatchesReference(image: ImageSummary, imageReference: string): boolean {
+  if (image.fingerprint === imageReference) {
+    return true
+  }
+
+  return image.aliases.some((alias) => alias.name === imageReference)
+}
+
+async function readAgentImageCatalog(
+  store: VmLifecycleStore,
+  endpointId: string,
+  options: VmLifecycleActionOptions
+): Promise<ImageSummary[]> {
+  const env = options.env ?? process.env
+  const timeoutMs = parseRequestTimeout(env.ANVIL_AGENT_REQUEST_TIMEOUT_MS)
+  const endpoint = await store.getEndpointForAgent(endpointId)
+  if (!endpoint || endpoint.status === "ARCHIVED") {
+    throw new VmLifecycleImagePolicyUnavailableError()
+  }
+
+  const createAgentClient = options.createAgentClient ?? ((clientOptions) => new AgentClient(clientOptions))
+  let client: VmLifecycleAgentClient
+  try {
+    client = createAgentClient({
+      url: endpoint.url,
+      token: endpoint.tokenCiphertext ? decryptEndpointToken(env, endpoint.tokenCiphertext) : undefined,
+      requestTimeoutMs: timeoutMs,
+    })
+  } catch (error) {
+    if (error instanceof EndpointTokenKeyError) {
+      throw error
+    }
+    throw new VmLifecycleImagePolicyUnavailableError()
+  }
+
+  try {
+    const response = await withAgentTimeout(
+      client.execute({ method: "GET", path: "/1.0/images?recursion=1" }),
+      timeoutMs
+    )
+    if (response.status < 200 || response.status >= 300) {
+      throw new VmLifecycleImagePolicyUnavailableError()
+    }
+    const images = readImageCatalog(response.body)
+    if (!images) {
+      throw new VmLifecycleImagePolicyUnavailableError()
+    }
+    return images
+  } catch (error) {
+    if (
+      error instanceof VmLifecycleImagePolicyUnavailableError ||
+      error instanceof EndpointTokenKeyError
+    ) {
+      throw error
+    }
+    if (
+      error instanceof AgentConnectionError ||
+      error instanceof AgentTimeoutError ||
+      error instanceof AgentProtocolError
+    ) {
+      throw new VmLifecycleImagePolicyUnavailableError()
+    }
+    throw error
+  } finally {
+    client.close?.()
+  }
 }
 
 async function callAgentLifecycle(

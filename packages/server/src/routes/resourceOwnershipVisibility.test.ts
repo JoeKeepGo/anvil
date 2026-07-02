@@ -261,6 +261,11 @@ describe("read-only resource ownership visibility", () => {
           expiresAt: null,
           lastUsedAt: null,
           uploadedAt: "2026-05-01T15:43:06Z",
+          runtimePolicy: {
+            secureBoot: { requirement: "UNKNOWN", source: "unknown" },
+            createEligible: false,
+            createBlockedReason: "IMAGE_NOT_VM",
+          },
         },
       ],
     })

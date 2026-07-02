@@ -13,7 +13,6 @@ import {
   listVmOperations,
   listVms,
   performVmAction,
-  resolveVmSecureBootEnabled,
   type VmLifecycleActionOptions,
   type VmLifecycleAgentClient,
   type VmLifecycleEndpointForAgent,
@@ -364,8 +363,24 @@ class RecordingAgentClient implements VmLifecycleAgentClient {
   nextBody: unknown = agentOperation("create")
   nextError?: string
   nextThrow?: Error
+  imageStatus = 200
+  imageBody: unknown = imageResponse([
+    vmImageMetadata("images/ubuntu/22.04", "images-ubuntu-22-04-fingerprint", {
+      "requirements.secureboot": "false",
+    }),
+  ]).body
+  imageError?: string
+  imageThrow?: Error
   async execute(request: AgentRequest): Promise<AgentResponse> {
     this.requests.push(request)
+    if (request.method === "GET" && request.path === "/1.0/images?recursion=1") {
+      if (this.imageThrow) {
+        const err = this.imageThrow
+        this.imageThrow = undefined
+        throw err
+      }
+      return { id: "image-resp", status: this.imageStatus, body: this.imageBody, error: this.imageError }
+    }
     if (this.nextThrow) {
       const err = this.nextThrow
       this.nextThrow = undefined
@@ -384,6 +399,14 @@ function actionOptions(agent: RecordingAgentClient): VmLifecycleActionOptions {
   }
 }
 
+function lifecycleRequests(agent: RecordingAgentClient): AgentRequest[] {
+  return agent.requests.filter((request) => request.path.startsWith("/agent/v1/lifecycle/"))
+}
+
+function imagePolicyRequests(agent: RecordingAgentClient): AgentRequest[] {
+  return agent.requests.filter((request) => request.path === "/1.0/images?recursion=1")
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -398,10 +421,15 @@ describe("vmLifecycle service", () => {
     assert.equal(result.vm.status, "PROVISIONING")
     assert.equal(result.operation.action, "CREATE")
     assert.equal(result.operation.status, "SUCCEEDED")
-    assert.equal(agent.requests.length, 1)
-    assert.equal(agent.requests[0].method, "POST")
-    assert.equal(agent.requests[0].path, "/agent/v1/lifecycle/instances/create")
-    assert.deepEqual(agent.requests[0].body, {
+    assert.deepEqual(agent.requests.map((request) => request.path), [
+      "/1.0/images?recursion=1",
+      "/agent/v1/lifecycle/instances/create",
+    ])
+    assert.deepEqual(imagePolicyRequests(agent), [{ method: "GET", path: "/1.0/images?recursion=1" }])
+    const [createRequest] = lifecycleRequests(agent)
+    assert.equal(createRequest.method, "POST")
+    assert.equal(createRequest.path, "/agent/v1/lifecycle/instances/create")
+    assert.deepEqual(createRequest.body, {
       name: "vm-1",
       image: "images/ubuntu/22.04",
       cpuCount: 1,
@@ -413,6 +441,162 @@ describe("vmLifecycle service", () => {
     assert.equal(store.auditEntries.length, 2)
     assert.equal(store.auditEntries[0].metadata?.status, "QUEUED")
     assert.equal(store.auditEntries[1].metadata?.status, "SUCCEEDED")
+  })
+
+  test("createVm sends secureBootEnabled true when image metadata requires secure boot", async () => {
+    const store = new FakeStore()
+    const agent = new RecordingAgentClient()
+    agent.imageBody = imageResponse([
+      vmImageMetadata("secureboot-required", "secureboot-required-fingerprint", {
+        "requirements.secureboot": "true",
+      }),
+    ]).body
+    agent.nextBody = agentOperation("create")
+
+    await createVm(
+      store,
+      admin,
+      { ...baseCreate, imageReference: "secureboot-required" },
+      actionOptions(agent)
+    )
+
+    assert.deepEqual(imagePolicyRequests(agent), [{ method: "GET", path: "/1.0/images?recursion=1" }])
+    assert.equal(lifecycleRequests(agent).length, 1)
+    assert.equal((lifecycleRequests(agent)[0].body as { secureBootEnabled?: unknown }).secureBootEnabled, true)
+  })
+
+  test("createVm blocks unknown image policy before VM persistence or lifecycle agent call", async () => {
+    const store = new FakeStore()
+    const agent = new RecordingAgentClient()
+    agent.imageBody = imageResponse([
+      vmImageMetadata("unknown-policy", "unknown-policy-fingerprint", {}),
+    ]).body
+
+    let caught: unknown
+    try {
+      await createVm(
+        store,
+        admin,
+        { ...baseCreate, imageReference: "unknown-policy" },
+        actionOptions(agent)
+      )
+    } catch (error) {
+      caught = error
+    }
+
+    assert.equal((caught as { code?: string }).code, "VM_IMAGE_NOT_ELIGIBLE")
+    assert.equal((caught as { reason?: string }).reason, "IMAGE_POLICY_UNKNOWN")
+    assert.equal(imagePolicyRequests(agent).length, 1)
+    assert.equal(lifecycleRequests(agent).length, 0)
+    assert.equal(store.vms.size, 0)
+    assert.equal(store.operations.size, 0)
+    assert.equal(store.auditEntries.length, 0)
+  })
+
+  test("createVm blocks malformed secure boot image metadata before lifecycle agent call", async () => {
+    const store = new FakeStore()
+    const agent = new RecordingAgentClient()
+    agent.imageBody = imageResponse([
+      vmImageMetadata("malformed-policy", "malformed-policy-fingerprint", {
+        "requirements.secureboot": true,
+      }),
+    ]).body
+
+    let caught: unknown
+    try {
+      await createVm(
+        store,
+        admin,
+        { ...baseCreate, imageReference: "malformed-policy" },
+        actionOptions(agent)
+      )
+    } catch (error) {
+      caught = error
+    }
+
+    assert.equal((caught as { code?: string }).code, "VM_IMAGE_NOT_ELIGIBLE")
+    assert.equal((caught as { reason?: string }).reason, "IMAGE_POLICY_UNKNOWN")
+    assert.equal(lifecycleRequests(agent).length, 0)
+    assert.equal(store.vms.size, 0)
+    assert.equal(store.operations.size, 0)
+  })
+
+  test("createVm blocks non-VM images before lifecycle agent call", async () => {
+    const store = new FakeStore()
+    const agent = new RecordingAgentClient()
+    agent.imageBody = imageResponse([
+      {
+        ...vmImageMetadata("container-image", "container-image-fingerprint", {
+          "requirements.secureboot": "false",
+        }),
+        type: "container",
+      },
+    ]).body
+
+    let caught: unknown
+    try {
+      await createVm(
+        store,
+        admin,
+        { ...baseCreate, imageReference: "container-image" },
+        actionOptions(agent)
+      )
+    } catch (error) {
+      caught = error
+    }
+
+    assert.equal((caught as { code?: string }).code, "VM_IMAGE_NOT_ELIGIBLE")
+    assert.equal((caught as { reason?: string }).reason, "IMAGE_NOT_VM")
+    assert.equal(lifecycleRequests(agent).length, 0)
+    assert.equal(store.vms.size, 0)
+    assert.equal(store.operations.size, 0)
+  })
+
+  test("createVm blocks missing or invisible images before lifecycle agent call", async () => {
+    const store = new FakeStore()
+    const agent = new RecordingAgentClient()
+    agent.imageBody = imageResponse([
+      vmImageMetadata("visible-image", "visible-image-fingerprint", {
+        "requirements.secureboot": "false",
+      }),
+    ]).body
+
+    let caught: unknown
+    try {
+      await createVm(
+        store,
+        admin,
+        { ...baseCreate, imageReference: "not-visible" },
+        actionOptions(agent)
+      )
+    } catch (error) {
+      caught = error
+    }
+
+    assert.equal((caught as { code?: string }).code, "VM_IMAGE_NOT_ELIGIBLE")
+    assert.equal((caught as { reason?: string }).reason, "IMAGE_NOT_FOUND")
+    assert.equal(lifecycleRequests(agent).length, 0)
+    assert.equal(store.vms.size, 0)
+    assert.equal(store.operations.size, 0)
+  })
+
+  test("createVm blocks malformed image catalog responses before lifecycle agent call", async () => {
+    const store = new FakeStore()
+    const agent = new RecordingAgentClient()
+    agent.imageBody = { metadata: "invalid", rawSecret: "do-not-return" }
+
+    let caught: unknown
+    try {
+      await createVm(store, admin, baseCreate, actionOptions(agent))
+    } catch (error) {
+      caught = error
+    }
+
+    assert.equal((caught as { code?: string }).code, "VM_IMAGE_POLICY_UNAVAILABLE")
+    assert.equal(JSON.stringify(caught).includes("do-not-return"), false)
+    assert.equal(lifecycleRequests(agent).length, 0)
+    assert.equal(store.vms.size, 0)
+    assert.equal(store.operations.size, 0)
   })
 
   test("createVm does not mark operation SUCCEEDED for old operation-accepted agent responses", async () => {
@@ -489,16 +673,18 @@ describe("vmLifecycle service", () => {
     await performVmAction(store, admin, { vmInstanceId: vmId, action: "DELETE" }, actionOptions(agent))
 
     const encodedName = encodeURIComponent("vm-1")
-    assert.equal(agent.requests.length, 5)
-    assert.equal(agent.requests[0].path, "/agent/v1/lifecycle/instances/create")
-    assert.equal(agent.requests[1].path, `/agent/v1/lifecycle/instances/${encodedName}/stop`)
-    assert.equal(agent.requests[1].body, undefined)
-    assert.equal(agent.requests[2].path, `/agent/v1/lifecycle/instances/${encodedName}/start`)
-    assert.equal(agent.requests[2].body, undefined)
-    assert.equal(agent.requests[3].path, `/agent/v1/lifecycle/instances/${encodedName}/restart`)
-    assert.equal(agent.requests[3].body, undefined)
-    assert.equal(agent.requests[4].path, `/agent/v1/lifecycle/instances/${encodedName}/delete`)
-    assert.deepEqual(agent.requests[4].body, { confirm: true })
+    assert.equal(imagePolicyRequests(agent).length, 1)
+    const lifecycle = lifecycleRequests(agent)
+    assert.equal(lifecycle.length, 5)
+    assert.equal(lifecycle[0].path, "/agent/v1/lifecycle/instances/create")
+    assert.equal(lifecycle[1].path, `/agent/v1/lifecycle/instances/${encodedName}/stop`)
+    assert.equal(lifecycle[1].body, undefined)
+    assert.equal(lifecycle[2].path, `/agent/v1/lifecycle/instances/${encodedName}/start`)
+    assert.equal(lifecycle[2].body, undefined)
+    assert.equal(lifecycle[3].path, `/agent/v1/lifecycle/instances/${encodedName}/restart`)
+    assert.equal(lifecycle[3].body, undefined)
+    assert.equal(lifecycle[4].path, `/agent/v1/lifecycle/instances/${encodedName}/delete`)
+    assert.deepEqual(lifecycle[4].body, { confirm: true })
   })
 
   test("agent operation statuses are accepted without treating them as VM runtime statuses", async () => {
@@ -933,7 +1119,7 @@ describe("vmLifecycle service", () => {
       ),
       /permission denied/i
     )
-    assert.equal(agent.requests.length, 1, "only the create agent call should have occurred")
+    assert.equal(lifecycleRequests(agent).length, 1, "only the create lifecycle call should have occurred")
   })
 
   test("listVms / getVm / listVmOperations deny MEMBERS read access", async () => {
@@ -965,22 +1151,43 @@ describe("vmLifecycle service", () => {
   })
 })
 
-describe("resolveVmSecureBootEnabled", () => {
-  test("returns false for known Alpine/smoke image references", () => {
-    assert.equal(resolveVmSecureBootEnabled("anvil-m13-smoke-image"), false)
-    assert.equal(resolveVmSecureBootEnabled("alpine/3.22"), false)
-    assert.equal(resolveVmSecureBootEnabled("images:alpine/3.22"), false)
-  })
+function imageResponse(metadata: unknown[]): AgentResponse {
+  return {
+    id: "images-response",
+    status: 200,
+    body: {
+      type: "sync",
+      status: "Success",
+      status_code: 200,
+      metadata,
+    },
+  }
+}
 
-  test("returns false for unknown image references (M13 default)", () => {
-    // M13 default is false: unknown images are assumed not to support Secure
-    // Boot. When an image catalogue with requirements.secureboot=true entries
-    // is introduced (M14+), this function will derive the value from metadata.
-    assert.equal(resolveVmSecureBootEnabled("images/ubuntu/22.04"), false)
-    assert.equal(resolveVmSecureBootEnabled("some-custom-image"), false)
-    assert.equal(resolveVmSecureBootEnabled(""), false)
-  })
-})
+function vmImageMetadata(
+  alias: string,
+  fingerprint: string,
+  properties: Record<string, unknown>
+): Record<string, unknown> {
+  return {
+    fingerprint,
+    aliases: [{ name: alias, description: "" }],
+    architecture: "x86_64",
+    auto_update: false,
+    cached: false,
+    created_at: "2026-06-25T00:00:00Z",
+    expires_at: "1970-01-01T00:00:00Z",
+    last_used_at: "2026-06-28T06:54:41.216264267Z",
+    properties: {
+      description: `${alias} image`,
+      ...properties,
+    },
+    public: false,
+    size: 70189968,
+    type: "virtual-machine",
+    uploaded_at: "2026-06-28T03:17:58.413550343Z",
+  }
+}
 
 async function assertRejects(promise: Promise<unknown>, messageRegex: RegExp): Promise<void> {
   try {

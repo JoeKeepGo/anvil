@@ -272,6 +272,24 @@ function mapVmRouteError(c: Context, error: unknown): Response {
       503
     )
   }
+  if (code === "VM_IMAGE_NOT_ELIGIBLE") {
+    return c.json(
+      {
+        error: {
+          code: "VM_IMAGE_NOT_ELIGIBLE",
+          message: "VM image is not eligible for create.",
+          details: { reason: (error as { reason?: string }).reason ?? "IMAGE_POLICY_UNKNOWN" },
+        },
+      },
+      400
+    )
+  }
+  if (code === "VM_IMAGE_POLICY_UNAVAILABLE") {
+    return c.json(
+      { error: { code: "VM_IMAGE_POLICY_UNAVAILABLE", message: "VM image policy is unavailable.", details: {} } },
+      502
+    )
+  }
   if (code === "VM_AGENT_MALFORMED") {
     return c.json(
       { error: { code: "VM_AGENT_MALFORMED", message: "Agent lifecycle response is malformed.", details: {} } },
