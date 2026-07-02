@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react"
 import { Link, useNavigate, useOutletContext } from "react-router-dom"
 import { ArrowLeft } from "lucide-react"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -19,8 +20,14 @@ import {
   fetchAdminProjects,
   fetchAdminProjectNetworkPools,
   fetchAdminTenants,
+  fetchImages,
 } from "@/lib/api"
-import type { VmAddressFamily } from "@/types"
+import type {
+  ImageCreateBlockedReason,
+  ImageSecureBootRequirement,
+  ImageSummary,
+  VmAddressFamily,
+} from "@/types"
 import { ApiRequestError } from "@/lib/api"
 import { canCreateVm } from "./AdminVms.access"
 import {
@@ -43,6 +50,7 @@ export function AdminVmCreate() {
   const projectsApi = useApi(fetchAdminProjects, useApiOptions)
   const endpointsApi = useApi(fetchAdminEndpoints, useApiOptions)
   const poolsApi = useApi(fetchAdminProjectNetworkPools, useApiOptions)
+  const imagesApi = useApi(fetchImages, useApiOptions)
 
   // Form state
   const [name, setName] = useState("")
@@ -61,6 +69,18 @@ export function AdminVmCreate() {
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [quotaDenied, setQuotaDenied] = useState(false)
   const [networkUnavailable, setNetworkUnavailable] = useState(false)
+
+  const selectedImage = useMemo(
+    () => findImageByReference(imagesApi.data ?? [], imageReference),
+    [imageReference, imagesApi.data]
+  )
+  const currentImagePolicyBlock = getImagePolicyBlockMessage({
+    imageReference,
+    image: selectedImage,
+    imagesLoaded: Boolean(imagesApi.data),
+    loading: imagesApi.loading,
+    error: imagesApi.error,
+  })
 
   if (!canWrite) {
     return (
@@ -96,6 +116,11 @@ export function AdminVmCreate() {
     }
     if (!Number.isFinite(disk) || disk < 1) {
       setSubmitError("Root disk must be at least 1 byte.")
+      return
+    }
+
+    if (currentImagePolicyBlock) {
+      setSubmitError(currentImagePolicyBlock)
       return
     }
 
@@ -329,6 +354,13 @@ export function AdminVmCreate() {
                 disabled={submitting}
                 required
               />
+              <ImagePolicySummary
+                imageReference={imageReference}
+                image={selectedImage}
+                imagesLoaded={Boolean(imagesApi.data)}
+                loading={imagesApi.loading}
+                error={imagesApi.error}
+              />
             </div>
 
             {/* CPU */}
@@ -386,7 +418,7 @@ export function AdminVmCreate() {
             </div>
 
             <div className="flex flex-wrap gap-3 pt-2">
-              <Button type="submit" disabled={submitting}>
+              <Button type="submit" disabled={submitting || Boolean(currentImagePolicyBlock)}>
                 {submitting ? "Creating VM..." : "Create VM"}
               </Button>
               <Button type="button" variant="outline" asChild>
@@ -396,6 +428,58 @@ export function AdminVmCreate() {
           </form>
         </CardContent>
       </Card>
+    </div>
+  )
+}
+
+interface ImagePolicySummaryProps {
+  imageReference: string
+  image: ImageSummary | null
+  imagesLoaded: boolean
+  loading: boolean
+  error: string | null
+}
+
+function ImagePolicySummary(props: ImagePolicySummaryProps) {
+  if (!props.imageReference.trim()) {
+    return null
+  }
+
+  const blockMessage = getImagePolicyBlockMessage(props)
+  const secureBootRequirement = props.image?.runtimePolicy.secureBoot.requirement ?? "UNKNOWN"
+
+  if (props.loading) {
+    return (
+      <div className="rounded-lg border border-border bg-muted/20 px-3 py-2 text-sm">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="font-medium">Image policy</span>
+          <Badge variant="outline">Checking</Badge>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="rounded-lg border border-border bg-muted/20 px-3 py-2 text-sm">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="font-medium">Image policy</span>
+        <Badge variant={blockMessage ? "destructive" : "outline"}>
+          {blockMessage ? "Blocked" : "Eligible"}
+        </Badge>
+      </div>
+      <div className="mt-2 grid gap-2 text-xs text-muted-foreground sm:grid-cols-2">
+        <div>
+          <span className="font-medium text-foreground">Secure Boot</span>{" "}
+          {formatSecureBootRequirement(secureBootRequirement)}
+        </div>
+        <div>
+          <span className="font-medium text-foreground">Reference</span>{" "}
+          <span className="break-all">{props.image?.fingerprint ?? props.imageReference.trim()}</span>
+        </div>
+      </div>
+      {blockMessage ? (
+        <div className="mt-2 text-xs text-destructive">{blockMessage}</div>
+      ) : null}
     </div>
   )
 }
@@ -424,4 +508,71 @@ function formatBytes(bytes: number): string {
   if (bytes >= 1073741824) return `${(bytes / 1073741824).toFixed(1)} GB`
   if (bytes >= 1048576) return `${(bytes / 1048576).toFixed(0)} MB`
   return `${bytes} B`
+}
+
+function findImageByReference(images: ImageSummary[], imageReference: string): ImageSummary | null {
+  const reference = imageReference.trim()
+  if (!reference) {
+    return null
+  }
+
+  return (
+    images.find(
+      (image) =>
+        image.fingerprint === reference || image.aliases.some((alias) => alias.name === reference)
+    ) ?? null
+  )
+}
+
+function getImagePolicyBlockMessage({
+  imageReference,
+  image,
+  imagesLoaded,
+  loading,
+  error,
+}: ImagePolicySummaryProps): string | null {
+  if (!imageReference.trim()) {
+    return null
+  }
+  if (loading) {
+    return "Image policy is still loading."
+  }
+  if (error) {
+    return "Image policy unavailable."
+  }
+  if (imagesLoaded && !image) {
+    return "Image unavailable or not visible."
+  }
+  if (!image) {
+    return null
+  }
+  if (!image.runtimePolicy.createEligible) {
+    return formatCreateBlockedReason(image.runtimePolicy.createBlockedReason)
+  }
+  if (image.runtimePolicy.secureBoot.requirement === "UNKNOWN") {
+    return "Image policy unknown."
+  }
+  return null
+}
+
+function formatSecureBootRequirement(requirement: ImageSecureBootRequirement): string {
+  switch (requirement) {
+    case "REQUIRED":
+      return "Required"
+    case "UNSUPPORTED":
+      return "Unsupported"
+    case "UNKNOWN":
+      return "Unknown"
+  }
+}
+
+function formatCreateBlockedReason(reason: ImageCreateBlockedReason): string {
+  switch (reason) {
+    case "IMAGE_POLICY_UNKNOWN":
+      return "Image policy unknown."
+    case "IMAGE_NOT_VM":
+      return "Not a VM image."
+    case null:
+      return "Image is not eligible for VM create."
+  }
 }

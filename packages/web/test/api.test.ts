@@ -28,6 +28,7 @@ import {
   fetchAdminTenants,
   fetchAdminUsers,
   fetchBootstrapStatus,
+  fetchImages,
   fetchMe,
   login,
   logout,
@@ -226,6 +227,54 @@ describe("auth API helpers", () => {
       status: 401,
       message: "Invalid email or password.",
     } satisfies Partial<ApiRequestError>)
+  })
+})
+
+describe("image API helpers", () => {
+  test("fetchImages preserves M14 browser-safe runtime policy without raw Incus properties", async () => {
+    installJsonFetch(200, {
+      images: [
+        {
+          fingerprint: "image-fingerprint",
+          aliases: [{ name: "ubuntu/24.04", description: "Ubuntu" }],
+          description: "Ubuntu 24.04 VM image",
+          architecture: "x86_64",
+          type: "virtual-machine",
+          sizeBytes: 536870912,
+          cached: true,
+          public: false,
+          autoUpdate: false,
+          createdAt: "2026-07-03T00:00:00.000Z",
+          expiresAt: null,
+          lastUsedAt: null,
+          uploadedAt: "2026-07-03T00:00:00.000Z",
+          runtimePolicy: {
+            secureBoot: {
+              requirement: "UNSUPPORTED",
+              source: "incus-image-property",
+            },
+            createEligible: true,
+            createBlockedReason: null,
+          },
+        },
+      ],
+    })
+
+    const images = await fetchImages()
+
+    assert.equal(fetchCalls[0]?.input, "/api/images")
+    assert.equal(fetchCalls[0]?.init?.credentials, "include")
+    assert.deepEqual(images[0]?.runtimePolicy, {
+      secureBoot: {
+        requirement: "UNSUPPORTED",
+        source: "incus-image-property",
+      },
+      createEligible: true,
+      createBlockedReason: null,
+    })
+    assert.equal(JSON.stringify(images).includes("requirements.secureboot"), false)
+    assert.equal(JSON.stringify(images).includes("properties"), false)
+    assert.equal(JSON.stringify(images).includes("token"), false)
   })
 })
 

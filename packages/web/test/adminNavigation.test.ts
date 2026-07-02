@@ -272,6 +272,10 @@ describe("M13 admin VM lifecycle navigation", () => {
     assert.match(adminVmCreateSource, /fetchAdminProjects/)
     assert.match(adminVmCreateSource, /fetchAdminEndpoints/)
     assert.match(adminVmCreateSource, /fetchAdminProjectNetworkPools/)
+    assert.match(adminVmCreateSource, /fetchImages/)
+    assert.match(adminVmCreateSource, /Image policy/)
+    assert.match(adminVmCreateSource, /IMAGE_POLICY_UNKNOWN/)
+    assert.match(adminVmCreateSource, /IMAGE_NOT_VM/)
   })
 })
 
