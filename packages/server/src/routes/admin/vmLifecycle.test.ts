@@ -429,8 +429,24 @@ class StubAgentClient implements VmLifecycleAgentClient {
   nextBody: unknown = agentOperation("create")
   nextError?: string
   nextThrow?: Error
+  imageStatus = 200
+  imageBody: unknown = imageResponse([
+    vmImageMetadata("images/ubuntu/22.04", "images-ubuntu-22-04-fingerprint", {
+      "requirements.secureboot": "false",
+    }),
+  ]).body
+  imageError?: string
+  imageThrow?: Error
   async execute(request: AgentRequest): Promise<AgentResponse> {
     this.requests.push(request)
+    if (request.method === "GET" && request.path === "/1.0/images?recursion=1") {
+      if (this.imageThrow) {
+        const err = this.imageThrow
+        this.imageThrow = undefined
+        throw err
+      }
+      return { id: "image-resp", status: this.imageStatus, body: this.imageBody, error: this.imageError }
+    }
     if (this.nextThrow) {
       const err = this.nextThrow
       this.nextThrow = undefined
@@ -449,6 +465,14 @@ function buildRoutes(store: FakeVmLifecycleStore, agent: StubAgentClient, princi
     createAgentClient: (_opts: AgentClientOptions) => agent,
     now: tickNow,
   })
+}
+
+function lifecycleRequests(agent: StubAgentClient): AgentRequest[] {
+  return agent.requests.filter((request) => request.path.startsWith("/agent/v1/lifecycle/"))
+}
+
+function imagePolicyRequests(agent: StubAgentClient): AgentRequest[] {
+  return agent.requests.filter((request) => request.path === "/1.0/images?recursion=1")
 }
 
 const baseCreateBody = {
@@ -542,10 +566,15 @@ describe("admin VM lifecycle routes", () => {
     assert.equal(body.operation.summary, "create operation-completed (agent-create-operation)")
 
     // Agent was called after policy passes with the lifecycle protocol path.
-    assert.equal(agent.requests.length, 1)
-    assert.equal(agent.requests[0].method, "POST")
-    assert.equal(agent.requests[0].path, "/agent/v1/lifecycle/instances/create")
-    assert.deepEqual(agent.requests[0].body, {
+    assert.deepEqual(agent.requests.map((request) => request.path), [
+      "/1.0/images?recursion=1",
+      "/agent/v1/lifecycle/instances/create",
+    ])
+    assert.deepEqual(imagePolicyRequests(agent), [{ method: "GET", path: "/1.0/images?recursion=1" }])
+    const [createRequest] = lifecycleRequests(agent)
+    assert.equal(createRequest.method, "POST")
+    assert.equal(createRequest.path, "/agent/v1/lifecycle/instances/create")
+    assert.deepEqual(createRequest.body, {
       name: "vm-1",
       image: "images/ubuntu/22.04",
       cpuCount: 1,
@@ -561,6 +590,35 @@ describe("admin VM lifecycle routes", () => {
     assert.equal(store.auditEntries[0].metadata?.action, "CREATE")
     assert.equal(store.auditEntries[0].metadata?.status, "QUEUED")
     assert.equal(store.auditEntries[1].metadata?.status, "SUCCEEDED")
+  })
+
+  test("denies unknown image policy with safe 400 before VM persistence or lifecycle call", async () => {
+    const store = new FakeVmLifecycleStore()
+    const agent = new StubAgentClient()
+    agent.imageBody = imageResponse([
+      vmImageMetadata("unknown-policy", "unknown-policy-fingerprint", {}),
+    ]).body
+    const routes = buildRoutes(store, agent)
+
+    const res = await routes.request("/vms", {
+      method: "POST",
+      body: JSON.stringify({ ...baseCreateBody, imageReference: "unknown-policy" }),
+      headers: jsonHeaders(sessionCookie(globalAdmin)),
+    })
+
+    assert.equal(res.status, 400)
+    assert.deepEqual(await readJson(res), {
+      error: {
+        code: "VM_IMAGE_NOT_ELIGIBLE",
+        message: "VM image is not eligible for create.",
+        details: { reason: "IMAGE_POLICY_UNKNOWN" },
+      },
+    })
+    assert.equal(imagePolicyRequests(agent).length, 1)
+    assert.equal(lifecycleRequests(agent).length, 0)
+    assert.equal(store.vms.size, 0)
+    assert.equal(store.operations.size, 0)
+    assert.equal(store.auditEntries.length, 0)
   })
 
   test("denies stale host readiness with 409 and no operation or agent call", async () => {
@@ -1103,7 +1161,7 @@ describe("admin VM lifecycle routes", () => {
     assert.equal((await readJson(startRes)).error.code, "VM_CONFLICT")
 
     // The agent must never have been called for the rejected action.
-    assert.equal(agent.requests.length, 1, "only the create agent call should have occurred")
+    assert.equal(lifecycleRequests(agent).length, 1, "only the create lifecycle call should have occurred")
   })
 
   test("rejects a new action while another lifecycle operation is queued (409 VM_CONFLICT)", async () => {
@@ -1134,7 +1192,7 @@ describe("admin VM lifecycle routes", () => {
     })
     assert.equal(startRes.status, 409)
     assert.equal((await readJson(startRes)).error.code, "VM_CONFLICT")
-    assert.equal(agent.requests.length, 1)
+    assert.equal(lifecycleRequests(agent).length, 1)
   })
 
   test("rejects invalid create body with 400", async () => {
@@ -1206,3 +1264,41 @@ describe("admin VM lifecycle routes", () => {
     assert.equal((await readJson(res)).error.code, "VM_AGENT_UNAVAILABLE")
   })
 })
+
+function imageResponse(metadata: unknown[]): AgentResponse {
+  return {
+    id: "images-response",
+    status: 200,
+    body: {
+      type: "sync",
+      status: "Success",
+      status_code: 200,
+      metadata,
+    },
+  }
+}
+
+function vmImageMetadata(
+  alias: string,
+  fingerprint: string,
+  properties: Record<string, unknown>
+): Record<string, unknown> {
+  return {
+    fingerprint,
+    aliases: [{ name: alias, description: "" }],
+    architecture: "x86_64",
+    auto_update: false,
+    cached: false,
+    created_at: "2026-06-25T00:00:00Z",
+    expires_at: "1970-01-01T00:00:00Z",
+    last_used_at: "2026-06-28T06:54:41.216264267Z",
+    properties: {
+      description: `${alias} image`,
+      ...properties,
+    },
+    public: false,
+    size: 70189968,
+    type: "virtual-machine",
+    uploaded_at: "2026-06-28T03:17:58.413550343Z",
+  }
+}
